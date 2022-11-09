@@ -11,7 +11,7 @@ from .ray_utils import *
 
 
 class BlenderDataset(Dataset):
-    def __init__(self, datadir, split='train', downsample=1.0, is_stack=False, N_vis=-1):
+    def __init__(self, datadir, split='train', downsample=1.0, is_stack=False, N_vis=-1, data_preparation = True):
 
         self.N_vis = N_vis
         self.root_dir = datadir
@@ -21,15 +21,18 @@ class BlenderDataset(Dataset):
         self.define_transforms()
 
         self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
-        # self.scene_bbox = torch.tensor([[-3.5, -3.5, -3.5], [3.5, 3.5, 3.5]])
-        self.scene_bbox = self.scene_bbox * 10.0
+        # if not  data_preparation:
+        self.scene_bbox = self.scene_bbox * 10.0#shark
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         self.read_meta()
         self.define_proj_mat()
 
         self.white_bg = True
-        self.near_far = [2.0,6.0]
-        # self.near_far = [2.0,18.0]
+       
+        self.near_far = [2.0,18.0]#shark
+        # self.near_far = [2.0,6.0]
+        if not data_preparation:
+             self.near_far = [2.0,6.0]
         
         self.center = torch.mean(self.scene_bbox, axis=0).float().view(1, 1, 3)
         self.radius = (self.scene_bbox[1] - self.center).float().view(1, 1, 3)

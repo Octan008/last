@@ -145,7 +145,7 @@ class TensorVMSplit(TensorBase):
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
         #
 
-        self.extra_plane, self.extra_line = self.init_one_svd_extra(self.density_n_comp, self.gridSize, 0.1, device)
+        # self.extra_plane, self.extra_line = self.init_one_svd_extra(self.density_n_comp, self.gridSize, 0.1, device)
 
 
     def init_one_svd(self, n_component, gridSize, scale, device):
@@ -160,17 +160,17 @@ class TensorVMSplit(TensorBase):
 
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
 
-    def init_one_svd_extra(self, n_component, gridSize, scale, device):
-        plane_coef, line_coef = [], []
-        for i in range(len(self.vecMode)):
-            vec_id = self.vecMode[i]
-            mat_id_0, mat_id_1 = self.matMode[i]
-            plane_coef.append(torch.nn.Parameter(
-                scale * torch.ones((1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])).to(torch.float32)))  #
-            line_coef.append(
-                torch.nn.Parameter(scale * torch.ones((1, n_component[i], gridSize[vec_id], 1))))
+    # def init_one_svd_extra(self, n_component, gridSize, scale, device):
+    #     plane_coef, line_coef = [], []
+    #     for i in range(len(self.vecMode)):
+    #         vec_id = self.vecMode[i]
+    #         mat_id_0, mat_id_1 = self.matMode[i]
+    #         plane_coef.append(torch.nn.Parameter(
+    #             scale * torch.ones((1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])).to(torch.float32)))  #
+    #         line_coef.append(
+    #             torch.nn.Parameter(scale * torch.ones((1, n_component[i], gridSize[vec_id], 1))))
 
-        return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
+    #     return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
     
     
 
@@ -319,8 +319,7 @@ class TensorVMSplit(TensorBase):
         print("====> shrinking ...")
         xyz_min, xyz_max = new_aabb
         t_l, b_r = (xyz_min - self.aabb[0]) / self.units, (xyz_max - self.aabb[0]) / self.units
-        # print(new_aabb, self.aabb)
-        # print(t_l, b_r,self.alphaMask.alpha_volume.shape)
+
         t_l, b_r = torch.round(torch.round(t_l)).long(), torch.round(b_r).long() + 1
         b_r = torch.stack([b_r, self.gridSize]).amin(0)
 

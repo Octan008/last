@@ -1,0 +1,9 @@
+*.png
+*.pth
+*.th
+log/
+cabin/
+ckpt/
+cub-1.10.0/
+data/
+npz/

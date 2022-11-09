@@ -171,7 +171,7 @@ class TensorBase(torch.nn.Module):
         self.vecMode =  [2, 1, 0]
         self.comp_w = [1,1,1]
 
-        self.gridSize = gridSize
+        self.gridSize_tmp = gridSize
 
         self.render_jointmask = False
         self.render_using_skeleton_quaternion = False
@@ -249,6 +249,9 @@ class TensorBase(torch.nn.Module):
 
     def set_pointCaster(self, caster):
         self.caster = caster
+    def set_skeletonmode(self):
+        self.data_preparation = False
+        self.gridSize = self.gridSize_tmp
 
     # def get_SH_vals(self, xyz, features, invs, locs):
     #     #features :(j, 9)
@@ -442,8 +445,10 @@ class TensorBase(torch.nn.Module):
             interpx += torch.rand_like(interpx).to(rays_o) * ((far - near) / N_samples)
 
         rays_pts = rays_o[..., None, :] + rays_d[..., None, :] * interpx[..., None]
-        # mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts > self.aabb[1])).any(dim=-1)
-        mask_outbbox = ((self.ray_aabb[0] > rays_pts) | (rays_pts > self.ray_aabb[1])).any(dim=-1)
+        if self.data_preparation:
+            mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts > self.aabb[1])).any(dim=-1)
+        else:
+            mask_outbbox = ((self.ray_aabb[0] > rays_pts) | (rays_pts > self.ray_aabb[1])).any(dim=-1)
         return rays_pts, interpx, ~mask_outbbox
 
     def modify_aabb(self, rate):
@@ -460,10 +465,12 @@ class TensorBase(torch.nn.Module):
         stepsize = self.stepSize
         near, far = self.near_far
         vec = torch.where(rays_d==0, torch.full_like(rays_d, 1e-6), rays_d)
-        # rate_a = (self.aabb[1] - rays_o) / vec
-        # rate_b = (self.aabb[0] - rays_o) / vec
-        rate_a = (self.ray_aabb[1] - rays_o) / vec
-        rate_b = (self.ray_aabb[0] - rays_o) / vec
+        if self.data_preparation:
+            rate_a = (self.aabb[1] - rays_o) / vec
+            rate_b = (self.aabb[0] - rays_o) / vec
+        else:
+            rate_a = (self.ray_aabb[1] - rays_o) / vec
+            rate_b = (self.ray_aabb[0] - rays_o) / vec
         t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)
 
         rng = torch.arange(N_samples)[None].float()
@@ -474,8 +481,10 @@ class TensorBase(torch.nn.Module):
         interpx = (t_min[...,None] + step)
 
         rays_pts = rays_o[...,None,:] + rays_d[...,None,:] * interpx[...,None]
-        # mask_outbbox = ((self.aabb[0]>rays_pts) | (rays_pts>self.aabb[1])).any(dim=-1)
-        mask_outbbox = ((self.ray_aabb[0]>rays_pts) | (rays_pts>self.ray_aabb[1])).any(dim=-1)
+        if self.data_preparation:
+            mask_outbbox = ((self.aabb[0]>rays_pts) | (rays_pts>self.aabb[1])).any(dim=-1)
+        else:
+            mask_outbbox = ((self.ray_aabb[0]>rays_pts) | (rays_pts>self.ray_aabb[1])).any(dim=-1)
 
         return rays_pts, interpx, ~mask_outbbox
 
@@ -613,12 +622,12 @@ class TensorBase(torch.nn.Module):
                 dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
             viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
             
-            # if self.alphaMask is not None:
-            #     alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
-            #     alpha_mask = alphas > 0
-            #     ray_invalid = ~ray_valid
-            #     ray_invalid[ray_valid] |= (~alpha_mask)
-            #     ray_valid = ~ray_invalid
+            if self.alphaMask is not None and self.data_preparation:
+                alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
+                alpha_mask = alphas > 0
+                ray_invalid = ~ray_valid
+                ray_invalid[ray_valid] |= (~alpha_mask)
+                ray_valid = ~ray_invalid
 
             sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
             rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
@@ -659,13 +668,11 @@ class TensorBase(torch.nn.Module):
             # self.joints = listify_skeleton(self.skeleton)
             # weights = self.get_SH_vals(xyz_sampled.reshape(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
 
-            # if(weights.isnan().any()):
-            #     ValueError("weights is nan")
+
             # weights = torch.cat([weights, weights], dim=0)
             # # taihi = tmp
             # tmp =  weighted_transformation(tmp, weights, transforms)
-            # if(tmp.isnan().any() or tmp.isinf().any()):
-            #     ValueError("tmp is nan")
+
             
             # #debug
             # xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
@@ -711,15 +718,10 @@ class TensorBase(torch.nn.Module):
 
         # Compute_alpha
         if app_mask.any():
-            app_features = self.compute_appfeature(xyz_sampled[app_mask])
-            # print(app_features.shape)
-            
+            app_features = self.compute_appfeature(xyz_sampled[app_mask])            
             valid_rgbs = self.renderModule(xyz_sampled[app_mask], viewdirs[app_mask], app_features)
-            # exit()
             rgb[app_mask] = valid_rgbs
-            # print("rgb化")
-            # print(rgb.shape, weights.shape)
-            # exit("rgb化")
+
             
             # rgb[inside][...,0] = 1.0;
             # rgb[inside][...,1:] = 0.0;

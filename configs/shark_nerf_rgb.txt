@@ -1,17 +1,18 @@
 
 dataset_name = blender
-datadir = ./data/nerf_synthetic/anim
+datadir = ./data/nerf_synthetic/shark
 expname =  tensorf_anim_VM_traintest55
 basedir = ./log
 add_timestamp = 1
 
 #ckpt = ./log/tensorf_shark_VM/tensorf_shark_VM.th
-ckpt = ./cabin/tensorf_shark_VM.th
+#ckpt = ./cabin/tensorf_shark_VM.th
+#ckpt = ./log/tensorf_anim_VM_traintest55-20221109-082707/tensorf_anim_VM_traintest55.th
 ckpt_skeleton = ./log/tensorf_anim_VM_traintest2/tensorf_anim_VM_traintest2_skeleton.th
 #sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
 n_iters = 30000
-#batch_size = 4096
-batch_size = 1024
+batch_size = 4096
+
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3
@@ -20,8 +21,8 @@ upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
 N_vis = 2
-vis_every = 1000
-step_ratio = 16
+vis_every = 10000
+step_ratio = 0.5
 #vis__every
 
 render_test = 1

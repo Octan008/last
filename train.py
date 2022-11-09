@@ -153,13 +153,20 @@ def reconstruction(args):
     aabb = train_dataset.scene_bbox.to(device)
     reso_cur = N_to_reso(args.N_voxel_init, aabb)
     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-
-
+    # print(args.nSamples, cal_n_samples(reso_cur,args.step_ratio), args.step_ratio)
+    
     if args.ckpt is not None:
         ckpt = torch.load(args.ckpt, map_location=device)
         kwargs = ckpt['kwargs']
         kwargs.update({'device':device})
         tensorf = eval(args.model_name)(**kwargs)
+        # print(kwargs)
+        # print()
+        # print(aabb, reso_cur, device,
+        #             n_lamb_sigma, n_lamb_sh, args.data_dim_color, near_far,
+        #             args.shadingMode, args.alpha_mask_thre, args.density_shift, args.distance_scale,
+        #             args.pos_pe, args.view_pe, args.fea_pe, args.featureC, args.step_ratio, args.fea2denseAct)
+        # exit("kwargs")
         tensorf.load(ckpt)
     else:
         tensorf = eval(args.model_name)(aabb, reso_cur, device,
@@ -167,8 +174,8 @@ def reconstruction(args):
                     shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre, density_shift=args.density_shift, distance_scale=args.distance_scale,
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
 
-
-    grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
+    tensorf = torch.nn.DataParallel(tensorf, device_ids=[0, 1])
+    grad_vars = tensorf.module.get_optparam_groups(args.lr_init, args.lr_basis)
     if args.lr_decay_iters > 0:
         lr_factor = args.lr_decay_target_ratio**(1/args.lr_decay_iters)
     else:
@@ -189,7 +196,7 @@ def reconstruction(args):
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
     if not args.ndc_ray:
-        allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
+        allrays, allrgbs = tensorf.module.filtering_rays(allrays, allrgbs, bbox_only=True)
     trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
 
     Ortho_reg_weight = args.Ortho_weight
@@ -219,22 +226,22 @@ def reconstruction(args):
         # loss
         total_loss = loss
         if Ortho_reg_weight > 0:
-            loss_reg = tensorf.vector_comp_diffs()
+            loss_reg = tensorf.module.vector_comp_diffs()
             total_loss += Ortho_reg_weight*loss_reg
             summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
         if L1_reg_weight > 0:
-            loss_reg_L1 = tensorf.density_L1()
+            loss_reg_L1 = tensorf.module.density_L1()
             total_loss += L1_reg_weight*loss_reg_L1
             summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
 
         if TV_weight_density>0:
             TV_weight_density *= lr_factor
-            loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
+            loss_tv = tensorf.module.TV_loss_density(tvreg) * TV_weight_density
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
         if TV_weight_app>0:
             TV_weight_app *= lr_factor
-            loss_tv = loss_tv + tensorf.TV_loss_app(tvreg)*TV_weight_app
+            loss_tv = loss_tv + tensorf.module.TV_loss_app(tvreg)*TV_weight_app
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
 
@@ -263,7 +270,7 @@ def reconstruction(args):
             PSNRs = []
 
         if  (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
+            PSNRs_test = evaluation(test_dataset,tensorf.module, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
                                     prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False)
             summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
 
@@ -273,9 +280,9 @@ def reconstruction(args):
 
             if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
                 reso_mask = reso_cur
-            new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
+            new_aabb = tensorf.module.updateAlphaMask(tuple(reso_mask))
             if iteration == update_AlphaMask_list[0]:
-                tensorf.shrink(new_aabb)
+                tensorf.module.shrink(new_aabb)
                 # tensorVM.alphaMask = None
                 L1_reg_weight = args.L1_weight_rest
                 print("continuing L1_reg_weight", L1_reg_weight)
@@ -283,37 +290,37 @@ def reconstruction(args):
 
             if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
                 # filter rays outside the bbox
-                allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
+                allrays,allrgbs = tensorf.module.filtering_rays(allrays,allrgbs)
                 trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
 
 
         if iteration in upsamp_list:
             n_voxels = N_voxel_list.pop(0)
-            reso_cur = N_to_reso(n_voxels, tensorf.aabb)
+            reso_cur = N_to_reso(n_voxels, tensorf.module.aabb)
             nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-            tensorf.upsample_volume_grid(reso_cur)
+            tensorf.module.upsample_volume_grid(reso_cur)
 
             if args.lr_upsample_reset:
                 print("reset lr to initial")
                 lr_scale = 1 #0.1 ** (iteration / args.n_iters)
             else:
                 lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-            grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
+            grad_vars = tensorf.module.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
             optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
         
 
-    tensorf.save(f'{logfolder}/{args.expname}.th')
+    tensorf.module.save(f'{logfolder}/{args.expname}.th')
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
+        PSNRs_test = evaluation(train_dataset,tensorf.module, args, renderer, f'{logfolder}/imgs_train_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_test:
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
+        PSNRs_test = evaluation(test_dataset,tensorf.module, args, renderer, f'{logfolder}/imgs_test_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
         summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
@@ -323,15 +330,15 @@ def reconstruction(args):
         # c2ws = test_dataset.poses
         print('========>',c2ws.shape)
         os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
+        evaluation_path(test_dataset,tensorf.module, c2ws, renderer, f'{logfolder}/imgs_path_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 def skeleton_optim(args):
 
     # init dataset
     dataset = dataset_dict[args.dataset_name]
-    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
-    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
+    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False, data_preparation = True)
+    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True, data_preparation = True)
     white_bg = train_dataset.white_bg
     near_far = train_dataset.near_far
     ndc_ray = args.ndc_ray
@@ -468,7 +475,7 @@ def skeleton_optim(args):
     pCaster.set_SH_feats(sh_joints())
     pCaster.set_skeleton(skeleton)
     tensorf.set_pointCaster(pCaster)
-    tensorf.data_preparation = False
+    tensorf.set_skeletonmode()
     # for grad in grad_vars:
     #     for param in grad["params"]:
     #         param.requires_grad = False

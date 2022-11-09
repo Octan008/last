@@ -4,4 +4,4 @@
 
 # python train.py --config configs/shark.txt --render_only 1 --render_test 1 
 # python train.py --config configs/shark.txt --render_only 1 --render_test 0
-python train.py --config configs/shark_nerf_rgb.txt --render_only 1 --render_test 0
+python train.py --config configs/shark_nerf_rgb.txt # --render_only 1 --render_test 1
