@@ -181,8 +181,6 @@ def reconstruction(args):
     else:
         args.lr_decay_iters = args.n_iters
         lr_factor = args.lr_decay_target_ratio**(1/args.n_iters)
-
-    print("lr decay", args.lr_decay_target_ratio, args.lr_decay_iters)
     
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
 

@@ -140,24 +140,28 @@ class TensorVMSplit(TensorBase):
 
 
     def init_svd_volume(self, res, device):
-        self.density_plane, self.density_line = self.init_one_svd(self.density_n_comp, self.gridSize, 0.1, device)
-        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
+        self.density_plane, self.density_line = self.init_one_svd(self.density_n_comp, self.gridSize, 0.1, device, name="density")
+        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device, name="app")
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
         #
 
         # self.extra_plane, self.extra_line = self.init_one_svd_extra(self.density_n_comp, self.gridSize, 0.1, device)
 
 
-    def init_one_svd(self, n_component, gridSize, scale, device):
+    def init_one_svd(self, n_component, gridSize, scale, device, name="none"):
         plane_coef, line_coef = [], []
         for i in range(len(self.vecMode)):
             vec_id = self.vecMode[i]
             mat_id_0, mat_id_1 = self.matMode[i]
-            plane_coef.append(torch.nn.Parameter(
-                scale * torch.randn((1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
-            line_coef.append(
-                torch.nn.Parameter(scale * torch.randn((1, n_component[i], gridSize[vec_id], 1))))
-
+            pc = torch.nn.Parameter(
+                scale * torch.randn((1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])).to(device))
+            lc = torch.nn.Parameter(scale * torch.randn((1, n_component[i], gridSize[vec_id], 1)).to(device))
+            plane_coef.append(pc)  #
+            line_coef.append(lc)
+            setattr(self, name+f'plane_coef_{i}', pc)
+            setattr(self, name+f'line_coef_{i}', lc)
+            setattr(self, name+f'param_list_num', i+1)
+        return plane_coef, line_coef
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
 
     # def init_one_svd_extra(self, n_component, gridSize, scale, device):
@@ -175,9 +179,17 @@ class TensorVMSplit(TensorBase):
     
 
     def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001):
-        grad_vars = [{'params': self.density_line, 'lr': lr_init_spatialxyz}, {'params': self.density_plane, 'lr': lr_init_spatialxyz},
-                     {'params': self.app_line, 'lr': lr_init_spatialxyz}, {'params': self.app_plane, 'lr': lr_init_spatialxyz},
-                         {'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
+        # grad_vars = [{'params': self.density_line, 'lr': lr_init_spatialxyz}, {'params': self.density_plane, 'lr': lr_init_spatialxyz},
+        #              {'params': self.app_line, 'lr': lr_init_spatialxyz}, {'params': self.app_plane, 'lr': lr_init_spatialxyz},
+        #                  {'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
+        grad_vars = [{'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
+        # grad_vars = []
+        for i in range(getattr(self, "density"+f'param_list_num')):
+            grad_vars.append({'params': getattr(self, "density"+f'plane_coef_{i}'), 'lr': lr_init_spatialxyz})
+            grad_vars.append({'params': getattr(self, "density"+f'line_coef_{i}'), 'lr': lr_init_spatialxyz})
+        for i in range(getattr(self, "app"+f'param_list_num')):
+            grad_vars.append({'params': getattr(self, "app"+f'plane_coef_{i}'), 'lr': lr_init_spatialxyz})
+            grad_vars.append({'params': getattr(self, "app"+f'line_coef_{i}'), 'lr': lr_init_spatialxyz})
         if isinstance(self.renderModule, torch.nn.Module):
             grad_vars += [{'params':self.renderModule.parameters(), 'lr':lr_init_network}]
         return grad_vars
@@ -243,9 +255,9 @@ class TensorVMSplit(TensorBase):
         coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
         sigma_feature = torch.zeros((xyz_sampled.shape[0],), device=xyz_sampled.device)
         for idx_plane in range(len(self.density_plane)):
-            plane_coef_point = F.grid_sample(self.density_plane[idx_plane], coordinate_plane[[idx_plane]],
+            plane_coef_point = F.grid_sample(self.density_plane[idx_plane].to(self.device), coordinate_plane[[idx_plane]],
                                                 align_corners=True).view(-1, *xyz_sampled.shape[:1])
-            line_coef_point = F.grid_sample(self.density_line[idx_plane], coordinate_line[[idx_plane]],
+            line_coef_point = F.grid_sample(self.density_line[idx_plane].to(self.device), coordinate_line[[idx_plane]],
                                             align_corners=True).view(-1, *xyz_sampled.shape[:1])
             # print("for", plane_coef_point.shape, line_coef_point.shape)
             sigma_feature = sigma_feature + torch.sum(plane_coef_point * line_coef_point, dim=0)
@@ -279,9 +291,9 @@ class TensorVMSplit(TensorBase):
 
         plane_coef_point,line_coef_point = [],[]
         for idx_plane in range(len(self.app_plane)):
-            plane_coef_point.append(F.grid_sample(self.app_plane[idx_plane], coordinate_plane[[idx_plane]],
+            plane_coef_point.append(F.grid_sample(self.app_plane[idx_plane].to(self.device), coordinate_plane[[idx_plane]],
                                                 align_corners=True).view(-1, *xyz_sampled.shape[:1]))
-            line_coef_point.append(F.grid_sample(self.app_line[idx_plane], coordinate_line[[idx_plane]],
+            line_coef_point.append(F.grid_sample(self.app_line[idx_plane].to(self.device), coordinate_line[[idx_plane]],
                                             align_corners=True).view(-1, *xyz_sampled.shape[:1]))
             # print("for", plane_coef_point.shape, line_coef_point.shape)
         plane_coef_point, line_coef_point = torch.cat(plane_coef_point), torch.cat(line_coef_point)

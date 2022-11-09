@@ -56,6 +56,11 @@ class AlphaGridMask(torch.nn.Module):
         alpha_vals = F.grid_sample(self.alpha_volume, xyz_sampled.view(1,-1,1,1,3), align_corners=True).view(-1)
 
         return alpha_vals
+    def set_device(self, device):
+        self.device = device
+        self.alpha_volume = self.alpha_volume.to(self.device)
+        self.aabb = self.aabb.to(self.device)
+        self.invgridSize = self.invgridSize.to(self.device)
 
     def normalize_coord(self, xyz_sampled):
         return (xyz_sampled-self.aabb[0]) * self.invgridSize - 1
@@ -147,13 +152,14 @@ class TensorBase(torch.nn.Module):
                     fea2denseAct = 'softplus'):
         super(TensorBase, self).__init__()
 
+        self.device=device
         self.density_n_comp = density_n_comp
         self.app_n_comp = appearance_n_comp
         self.app_dim = app_dim
-        self.aabb = aabb
-        self.ray_aabb = aabb
+        self.aabb = aabb.to(device)
+        self.ray_aabb = aabb.to(device)
         self.alphaMask = alphaMask
-        self.device=device
+        
 
         self.density_shift = density_shift
         self.alphaMask_thres = alphaMask_thres
@@ -607,7 +613,10 @@ class TensorBase(torch.nn.Module):
 
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1, skeleton_props=None, is_render_only=False):
-        
+        self.stepSize = self.stepSize.to(rays_chunk.device)
+        self.aabb = self.aabb.to(rays_chunk.device)
+        self.invaabbSize = self.invaabbSize.to(rays_chunk.device)
+        self.device = rays_chunk.device
         # <sample points> -> xyz, viewdirs
         if True:
             viewdirs = rays_chunk[:, 3:6]
@@ -623,6 +632,7 @@ class TensorBase(torch.nn.Module):
             viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
             
             if self.alphaMask is not None and self.data_preparation:
+                self.alphaMask.set_device(self.device)
                 alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
                 alpha_mask = alphas > 0
                 ray_invalid = ~ray_valid
@@ -753,7 +763,7 @@ class TensorBase(torch.nn.Module):
             depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
         if not self.data_preparation:
             if draw_joints:
-                rgb_map[mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=torch.device('cuda:0'))
+                rgb_map[mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=torch.device('cuda'))
 
         return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
 
