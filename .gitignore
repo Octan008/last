@@ -7,3 +7,6 @@ ckpt/
 cub-1.10.0/
 data/
 npz/
+*.pyc
+*.mp4
+log_old*

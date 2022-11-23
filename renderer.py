@@ -6,6 +6,7 @@ from utils import *
 from dataLoader.ray_utils import ndc_rays_blender
 
 npz_point_cloud = False
+n_vis_offset = 0
 
 def crop_rays(ray, w, h, crop_box, rgb=None, filter = 1):
     print(ray.shape)
@@ -56,9 +57,11 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
 
     near_far = test_dataset.near_far
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
-    idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
+    # print(test_dataset.all_rays.shape[0])
+    # exit("exit_test")
+    idxs = list(range(n_vis_offset, test_dataset.all_rays.shape[0], img_eval_interval))
     tensorf.set_render_flags(jointmask = True)
-    for idx, samples in tqdm(enumerate(test_dataset.all_rays[0::img_eval_interval]), file=sys.stdout):
+    for idx, samples in tqdm(enumerate(test_dataset.all_rays[n_vis_offset::img_eval_interval]), file=sys.stdout):
 
         W, H = test_dataset.img_wh
         rays = samples.view(-1,samples.shape[-1])
@@ -71,7 +74,7 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
             skeleton_props = {"frame_pose": skeleton_dataset(idx)}
         else:
             skeleton_props = {"frame_pose": test_dataset.frame_poses[idx]}
-        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
                                         ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props=skeleton_props, is_render_only=is_render_only)
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
@@ -92,7 +95,9 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
                 l_vgg.append(l_v)
 
         rgb_map = (rgb_map.numpy() * 255).astype('uint8')
-        # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
+        #GT と inf を一緒に保存
+        gt_rgb = (test_dataset.all_rgbs[idxs[idx]].view(H, W, 3).numpy() * 255).astype('uint8')
+        rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
         rgb_maps.append(rgb_map)
         depth_maps.append(depth_map)
         if savePath is not None:

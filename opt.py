@@ -24,6 +24,7 @@ def config_parser(cmd=None):
 
     # loader options
     parser.add_argument("--batch_size", type=int, default=4096)
+    parser.add_argument("--test_batch_size", type=int, default=4096)
     parser.add_argument("--n_iters", type=int, default=30000)
 
     parser.add_argument('--dataset_name', type=str, default='blender',
@@ -88,11 +89,14 @@ def config_parser(cmd=None):
                         help='specific weights npy file to reload for coarse network')
     parser.add_argument("--ckpt_skeleton", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--ckpt_pcaster", type=str, default=None,
+                        help='specific weights npy file to reload for coarse network')
     parser.add_argument("--ckpt_weights", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
     parser.add_argument("--sh_feats", type=str, default=None,
                     help='specific weights npy file to reload for coarse network')
     parser.add_argument("--render_only", type=int, default=0)
+    parser.add_argument("--bwf", type=int, default=0)
     parser.add_argument("--render_test", type=int, default=0)
     parser.add_argument("--render_train", type=int, default=0)
     parser.add_argument("--render_path", type=int, default=0)

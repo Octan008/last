@@ -12,7 +12,14 @@ class SphereHarmonicJoints(nn.Module):
         self.feats = nn.Parameter(feats, requires_grad=True)
         # self.feats = nn.Parameter(torch.tensor([30.0], dtype=torch.float32).unsqueeze(0).repeat(num_joints, dim), requires_grad=True)#.to("cuda:0")  # (j, dim, 1)
         # print("init", self.state_dict().keys())
-
+    def set_allgrads(self, value):
+        # grad_vars = [{'params': self.density_line, 'lr': lr_init_spatialxyz},
+        #         {'params': self.app_line, 'lr': lr_init_spatialxyz},
+        #         {'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
+        for param in self.feats:
+            if not value:
+                param = param.detach()
+            # param.requires_grad = value
     def get_feats(self):
         return self.feats[...]
     def forward(self):
