@@ -6,6 +6,8 @@ def config_parser(cmd=None):
                         help='config file path')
     parser.add_argument("--expname", type=str,
                         help='experiment name')
+    parser.add_argument("--pose_type", type=str, default = "eular",
+                        help='experiment name')
     parser.add_argument("--basedir", type=str, default='./log',
                         help='where to store ckpts and logs')
     parser.add_argument("--add_timestamp", type=int, default=0,
@@ -24,7 +26,9 @@ def config_parser(cmd=None):
 
     # loader options
     parser.add_argument("--batch_size", type=int, default=4096)
+    parser.add_argument("--test_batch_size", type=int, default=4096)
     parser.add_argument("--n_iters", type=int, default=30000)
+    parser.add_argument("--rank_criteria", type=int, default=0)
 
     parser.add_argument('--dataset_name', type=str, default='blender',
                         choices=['blender', 'llff', 'nsvf', 'dtu','tankstemple', 'own_data'])
@@ -86,17 +90,29 @@ def config_parser(cmd=None):
 
     parser.add_argument("--ckpt", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--ckpt_ngp", type=str, default=None,
+                        help='specific weights npy file to reload for coarse network')
     parser.add_argument("--ckpt_skeleton", type=str, default=None,
+                        help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--ckpt_pcaster", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
     parser.add_argument("--ckpt_weights", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
     parser.add_argument("--sh_feats", type=str, default=None,
                     help='specific weights npy file to reload for coarse network')
+
+    #Flags
     parser.add_argument("--render_only", type=int, default=0)
+    parser.add_argument("--bwf", type=int, default=0)
     parser.add_argument("--render_test", type=int, default=0)
     parser.add_argument("--render_train", type=int, default=0)
     parser.add_argument("--render_path", type=int, default=0)
     parser.add_argument("--export_mesh", type=int, default=0)
+    parser.add_argument("--shcaster", type=int, default=1)
+    parser.add_argument("--use_gt_skeleton", type=int, default=0)
+    parser.add_argument("--data_preparation", type=int, default=0)
+
+    parser.add_argument("--ngp_render", type=int, default=0)
 
     # rendering options
     parser.add_argument('--lindisp', default=False, action="store_true",

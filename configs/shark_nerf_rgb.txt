@@ -1,13 +1,13 @@
 
 dataset_name = blender
-datadir = ./data/nerf_synthetic/shark
+datadir = ./data/nerf_synthetic/anim
 expname =  tensorf_anim_VM_traintest55
 basedir = ./log
 add_timestamp = 1
 
 #ckpt = ./log/tensorf_shark_VM/tensorf_shark_VM.th
 #ckpt = ./cabin/tensorf_shark_VM.th
-#ckpt = ./log/tensorf_anim_VM_traintest55-20221109-082707/tensorf_anim_VM_traintest55.th
+ckpt = ./log/tensorf_anim_VM_traintest55-20221109-082707/tensorf_anim_VM_traintest55.th
 ckpt_skeleton = ./log/tensorf_anim_VM_traintest2/tensorf_anim_VM_traintest2_skeleton.th
 #sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
 n_iters = 30000

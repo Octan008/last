@@ -5,6 +5,7 @@ from tqdm import tqdm
 import os
 from PIL import Image
 from torchvision import transforms as T
+from torchngp.nerf.provider import nerf_matrix_to_ngp
 
 
 from .ray_utils import *
@@ -63,6 +64,8 @@ class BlenderDataset(Dataset):
         self.all_rgbs = []
         self.all_masks = []
         self.all_depth = []
+        self.all_animFrames = []
+        self.unique_animFrames = set()
         #here
         self.frame_poses = []
         self.downsample=1.0
@@ -74,7 +77,8 @@ class BlenderDataset(Dataset):
         for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'):#img_list:#
 
             frame = self.meta['frames'][i]
-            pose = np.array(frame['transform_matrix']) @ self.blender2opencv
+            # pose = np.array(frame['transform_matrix']) @ self.blender2opencv
+            pose = nerf_matrix_to_ngp(np.array(frame['transform_matrix']))
             c2w = torch.FloatTensor(pose)
             self.poses += [c2w]
             self.frame_poses += [frame['animation']]
@@ -89,12 +93,22 @@ class BlenderDataset(Dataset):
             img = img.view(4, -1).permute(1, 0)  # (h*w, 4) RGBA
             img = img[:, :3] * img[:, -1:] + (1 - img[:, -1:])  # blend A to RGB
             self.all_rgbs += [img]
+            anim_frame = frame["anim_frame"]
+            self.all_animFrames += [anim_frame]
+            self.unique_animFrames.add(anim_frame)
+            # print(frame['file_path'], anim_frame)
+            # if(int(frame['file_path'].split(".png")[0].split("_")[-1]) == int(frame["anim_frame"])):
+            #     print("same")
+            # else:
+            #     print("not same")
+            #     exit("not ok")
+            
 
 
             rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
             self.all_rays += [torch.cat([rays_o, rays_d], 1)]  # (h*w, 6)
 
-
+        # exit("blender")
         self.poses = torch.stack(self.poses)
         if not self.is_stack:
             self.all_rays = torch.cat(self.all_rays, 0)  # (len(self.meta['frames])*h*w, 3)

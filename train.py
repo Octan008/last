@@ -3,8 +3,8 @@ import os
 from torch import tensor, unsqueeze
 from tqdm.auto import tqdm
 from opt import config_parser
-from models.sh_joints import SphereHarmonicJoints
-from models.pointCaster import shCaster
+from models.sh_field import SphereHarmonicJoints
+from models.pointCaster import *
 
 
 import json, random
@@ -19,6 +19,13 @@ import sys
 from nerf.render_util import *
 from nerf.skeleton_poses import *
 
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+parallel = False
+dist_test = True
+rank_criteria = 0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -54,67 +61,67 @@ def export_mesh(args):
 
 npz_point_cloud = False
 
-@torch.no_grad()
-def render_test(args):
-    # init dataset
-    dataset = dataset_dict[args.dataset_name]
+# @torch.no_grad()
+# def render_test(args):
+#     # init dataset
+#     dataset = dataset_dict[args.dataset_name]
     
-    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
-    white_bg = test_dataset.white_bg
-    ndc_ray = args.ndc_ray
+#     test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
+#     white_bg = test_dataset.white_bg
+#     ndc_ray = args.ndc_ray
 
-    if not os.path.exists(args.ckpt):
-        print('the ckpt path does not exists!!')
-        return
+#     if not os.path.exists(args.ckpt):
+#         print('the ckpt path does not exists!!')
+#         return
 
-    ckpt = torch.load(args.ckpt, map_location=device)
-    kwargs = ckpt['kwargs']
-    print(kwargs)
-    #アドホック
-    # kwargs["aabb"] =  torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]]).to(device)*10.0;
-    # kwargs["shadingMode"] = args.shadingMode;
-    kwargs.update({'device': device})
-    tensorf = eval(args.model_name)(**kwargs)
-    tensorf.load(ckpt)
-    # tensorf.modify_aabb(torch.tensor([1.5,1.5,1.0]).to(device))
-    if npz_point_cloud:
-        tensorf.modify_aabb(torch.tensor([0.1, 0.1, 0.1]).to(device))
-
-
-
-    animation_conf=args.datadir+"/transforms.json"
-    skeleton =  make_joints_from_blender(animation_conf)
-    skeleton.precompute_id(0)
-    frames = json.load(open(animation_conf, 'r'))["frames"]
-    joints = listify_skeleton(skeleton)
-    skeleton.set_inv_precomputations(len(joints))
-    skeleton.set_tails(skeleton.get_tail_ids())
-    # for j in skeleton.get_children():
-    #     apply_animation(test_dataset.frame_poses[14], j)
-    tensorf.set_framepose(test_dataset.frame_poses[14])
-
-    tensorf.set_skeleton(skeleton)
+#     ckpt = torch.load(args.ckpt, map_location=device)
+#     kwargs = ckpt['kwargs']
+#     print(kwargs)
+#     #アドホック
+#     # kwargs["aabb"] =  torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]]).to(device)*10.0;
+#     # kwargs["shadingMode"] = args.shadingMode;
+#     kwargs.update({'device': device})
+#     tensorf = eval(args.model_name)(**kwargs)
+#     tensorf.load(ckpt)
+#     # tensorf.modify_aabb(torch.tensor([1.5,1.5,1.0]).to(device))
+#     if npz_point_cloud:
+#         tensorf.modify_aabb(torch.tensor([0.1, 0.1, 0.1]).to(device))
 
 
-    logfolder = os.path.dirname(args.ckpt)
-    if args.render_train:
-        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device, is_render_only=True)
-        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} <========================')
 
-    if args.render_test:
-        os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
-        evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device,compute_extra_metrics=False)
+#     animation_conf=args.datadir+"/transforms.json"
+#     skeleton =  make_joints_from_blender(animation_conf)
+#     skeleton.precompute_id(0)
+#     frames = json.load(open(animation_conf, 'r'))["frames"]
+#     joints = listify_skeleton(skeleton)
+#     skeleton.set_inv_precomputations(len(joints))
+#     skeleton.set_tails(skeleton.get_tail_ids())
+#     # for j in skeleton.get_children():
+#     #     apply_animation(test_dataset.frame_poses[14], j)
+#     tensorf.set_framepose(test_dataset.frame_poses[14])
 
-    if args.render_path:
-        c2ws = test_dataset.render_path
-        os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-    exit()
+#     tensorf.set_skeleton(skeleton)
+
+
+#     logfolder = os.path.dirname(args.ckpt)
+#     if args.render_train:
+#         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
+#         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
+#         PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
+#                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device, is_render_only=True)
+#         print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} <========================')
+
+#     if args.render_test:
+#         os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
+#         evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
+#                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device,compute_extra_metrics=False)
+
+#     if args.render_path:
+#         c2ws = test_dataset.render_path
+#         os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
+#         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
+#                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+#     exit()
 
 def reconstruction(args):
 
@@ -174,8 +181,8 @@ def reconstruction(args):
                     shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre, density_shift=args.density_shift, distance_scale=args.distance_scale,
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
 
-    tensorf = torch.nn.DataParallel(tensorf, device_ids=[0, 1])
-    grad_vars = tensorf.module.get_optparam_groups(args.lr_init, args.lr_basis)
+    # tensorf = torch.nn.DataParallel(tensorf, device_ids=[0, 1])
+    grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
     if args.lr_decay_iters > 0:
         lr_factor = args.lr_decay_target_ratio**(1/args.lr_decay_iters)
     else:
@@ -194,7 +201,7 @@ def reconstruction(args):
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
     if not args.ndc_ray:
-        allrays, allrgbs = tensorf.module.filtering_rays(allrays, allrgbs, bbox_only=True)
+        allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
     trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
 
     Ortho_reg_weight = args.Ortho_weight
@@ -224,22 +231,22 @@ def reconstruction(args):
         # loss
         total_loss = loss
         if Ortho_reg_weight > 0:
-            loss_reg = tensorf.module.vector_comp_diffs()
+            loss_reg = tensorf.vector_comp_diffs()
             total_loss += Ortho_reg_weight*loss_reg
             summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
         if L1_reg_weight > 0:
-            loss_reg_L1 = tensorf.module.density_L1()
+            loss_reg_L1 = tensorf.density_L1()
             total_loss += L1_reg_weight*loss_reg_L1
             summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
 
         if TV_weight_density>0:
             TV_weight_density *= lr_factor
-            loss_tv = tensorf.module.TV_loss_density(tvreg) * TV_weight_density
+            loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
         if TV_weight_app>0:
             TV_weight_app *= lr_factor
-            loss_tv = loss_tv + tensorf.module.TV_loss_app(tvreg)*TV_weight_app
+            loss_tv = loss_tv + tensorf.TV_loss_app(tvreg)*TV_weight_app
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
 
@@ -268,8 +275,8 @@ def reconstruction(args):
             PSNRs = []
 
         if  (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-            PSNRs_test = evaluation(test_dataset,tensorf.module, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
-                                    prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False)
+            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
+                                    prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, device=device)
             summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
 
 
@@ -278,9 +285,9 @@ def reconstruction(args):
 
             if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
                 reso_mask = reso_cur
-            new_aabb = tensorf.module.updateAlphaMask(tuple(reso_mask))
+            new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
             if iteration == update_AlphaMask_list[0]:
-                tensorf.module.shrink(new_aabb)
+                tensorf.shrink(new_aabb)
                 # tensorVM.alphaMask = None
                 L1_reg_weight = args.L1_weight_rest
                 print("continuing L1_reg_weight", L1_reg_weight)
@@ -288,37 +295,37 @@ def reconstruction(args):
 
             if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
                 # filter rays outside the bbox
-                allrays,allrgbs = tensorf.module.filtering_rays(allrays,allrgbs)
+                allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
                 trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
 
 
         if iteration in upsamp_list:
             n_voxels = N_voxel_list.pop(0)
-            reso_cur = N_to_reso(n_voxels, tensorf.module.aabb)
+            reso_cur = N_to_reso(n_voxels, tensorf.aabb)
             nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-            tensorf.module.upsample_volume_grid(reso_cur)
+            tensorf.upsample_volume_grid(reso_cur)
 
             if args.lr_upsample_reset:
                 print("reset lr to initial")
                 lr_scale = 1 #0.1 ** (iteration / args.n_iters)
             else:
                 lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-            grad_vars = tensorf.module.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
+            grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
             optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
         
 
-    tensorf.module.save(f'{logfolder}/{args.expname}.th')
+    tensorf.save(f'{logfolder}/{args.expname}.th')
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,tensorf.module, args, renderer, f'{logfolder}/imgs_train_all/',
+        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_test:
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset,tensorf.module, args, renderer, f'{logfolder}/imgs_test_all/',
+        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
         summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
@@ -328,19 +335,30 @@ def reconstruction(args):
         # c2ws = test_dataset.poses
         print('========>',c2ws.shape)
         os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset,tensorf.module, c2ws, renderer, f'{logfolder}/imgs_path_all/',
+        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
-def skeleton_optim(args):
 
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+
+
+
+def skeleton_optim(rank, args, n_gpu = 1):
+    rank_diff = rank - rank_criteria
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(rank)
+    if parallel:
+        dist.init_process_group("gloo", rank=rank, world_size=n_gpu)
     # init dataset
     dataset = dataset_dict[args.dataset_name]
     train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False, data_preparation = True)
-    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True, data_preparation = True)
+    test_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True, data_preparation = True)
+    # test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True, data_preparation = True)
     white_bg = train_dataset.white_bg
     near_far = train_dataset.near_far
     ndc_ray = args.ndc_ray
-
     # init resolution
     upsamp_list = args.upsamp_list
     update_AlphaMask_list = args.update_AlphaMask_list
@@ -367,6 +385,7 @@ def skeleton_optim(args):
 
     # init parameters
     # tensorVM, renderer = init_parameters(args, train_dataset.scene_bbox.to(device), reso_list[0])
+    device = "cuda:"+str(rank)
     aabb = train_dataset.scene_bbox.to(device)
     reso_cur = N_to_reso(args.N_voxel_init, aabb)
     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
@@ -400,6 +419,9 @@ def skeleton_optim(args):
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
     # grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
     # print(grad_vars)
+
+
+
     if args.lr_decay_iters > 0:
         lr_factor = args.lr_decay_target_ratio**(1/args.lr_decay_iters)
     else:
@@ -439,66 +461,188 @@ def skeleton_optim(args):
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
     
     animation_conf=args.datadir+"/transforms.json"
-    skeleton =  make_joints_from_blender(animation_conf)
+    skeleton =  make_joints_from_blender(animation_conf, device = device)
     skeleton.precompute_id(0)
     frames = json.load(open(animation_conf, 'r'))["frames"]
     joints = listify_skeleton(skeleton)
     skeleton.set_inv_precomputations(len(joints))
+    skeleton.set_as_root()
     skeleton.set_tails(skeleton.get_tail_ids())
 
     num_frames = len(train_dataset.frame_poses)
+
     ray_per_img = test_dataset.rays_per_img
-    # print(ray_per_img)
     itr = 0
     allrays = allrays.reshape(num_frames, -1, 6)
+    num_animFrames = len(train_dataset.unique_animFrames)
+    allanimframes = train_dataset.all_animFrames
     allrgbs = allrgbs.reshape(num_frames, -1, 3)
 
 
     tensorf.set_skeleton(skeleton)
-    skeleton_dataset = LearnSkeletonPose(num_frames, len(joints), type="quaternion")
-    skeleton_dataset.to("cuda:0")
+    skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type=args.pose_type)
+    skeleton_dataset.to(device)
     skeleton_dataset.set_tails(skeleton.get_tail_ids())
+    tensorf.set_posetype(args.pose_type)
     tensorf.set_allgrads(False)
+    tensorf.use_gt_skeleton = args.use_gt_skeleton
+
+    #NGPRender Setting
+    tensorf.set_ngprender(args.ngp_render)
+    if args.ckpt_ngp is not None:
+        tensorf.load(args.ckpt_ngp)
 
     
-    sh_joints = SphereHarmonicJoints(len(joints), 9)
-    sh_joints.to("cuda:0")
+    sh_field = SphereHarmonicJoints(len(joints), 9)
+    sh_field.to(device)
     if args.sh_feats is not None:
         feats = torch.load(args.sh_feats)
-        #sh_joints.set_feats(feats)
+        #sh_field.set_feats(feats)
         print(feats["state_dict"].keys())
-        sh_joints.load_state_dict(feats["state_dict"])
-    # tensorf.set_SH_feats(sh_joints())
-    pCaster = shCaster()
-    pCaster.set_SH_feats(sh_joints())
-    pCaster.set_skeleton(skeleton)
-    tensorf.set_pointCaster(pCaster)
+        sh_field.load_state_dict(feats["state_dict"])
+    # tensorf.set_SH_feats(sh_field())
+
+
+    SHCaster = args.shcaster
+    if SHCaster:
+        pCaster_origin  = shCaster()
+        pCaster_origin.set_SH_feats(sh_field())
+        pCaster_origin.set_skeleton(skeleton)
+        grad_vars_sh_field = sh_field.parameters()
+    else:
+        # print(reso_cur)
+        reso_cur_2 = reso_cur
+        reso_cur_2[0] = reso_cur_2[0]//4
+        reso_cur_2[1] = reso_cur_2[1]//4
+        reso_cur_2[2] = reso_cur_2[2]//4
+        # exit()
+        pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
+        pCaster_origin.set_skeleton(skeleton)
+        if args.ckpt_pcaster is not None:
+            ckpt = torch.load(args.ckpt_pcaster, map_location=device)
+            pCaster_origin.load_state_dict(ckpt["state_dict"])
+            # exit("laod_state_dict")
+    
+    pCaster_origin.set_usedistweight(dist_test)
+    # pCaster_origin.set_allgrads(not dist_test)
+
+    
     tensorf.set_skeletonmode()
     # for grad in grad_vars:
     #     for param in grad["params"]:
     #         param.requires_grad = False
     
-    grad_vars = skeleton_dataset.parameters()
-    grad_vars_sh_joints = sh_joints.parameters()
 
-    #<Training> Setup Optimizer
-    optimizer = torch.optim.Adam([{'params': grad_vars_sh_joints, 'lr': 1e-1}], betas=(0.9,0.99))
     # skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
     if args.ckpt_skeleton is not None:
         skeleton_dataset.load(torch.load(args.ckpt_skeleton, map_location=device))
+        exit("skeleton_load")
 
+    lr_grid = 1e-4
+    if parallel:
+        # tensorf = tensorf.to("cuda:0")
+        # tensorf_ddp =  DDP(tensorf, device_ids=[rank])
+        pCaster = DDP(pCaster_origin, device_ids=[rank])
+        if not SHCaster:
+            grad_vars_pcaster = pCaster_origin.get_optparam_groups(lr_init_spatialxyz = lr_grid )
+        tensorf.set_pointCaster(pCaster, pCaster_origin)
 
+        # tensorf_ddp = tensorf
+
+    else:
+        tensorf_ddp = tensorf
+        pCaster = pCaster_origin
+        if not SHCaster:
+            grad_vars_pcaster = pCaster.get_optparam_groups(lr_init_spatialxyz = lr_grid )
+        tensorf.set_pointCaster(pCaster)
+
+    if parallel:
+        num_frames = num_frames // n_gpu
+        if(rank < num_frames % n_gpu):
+            num_frames += 1
+
+    grad_vars_skeletonpose = skeleton_dataset.parameters()
+    
+    
+
+    #<Training> Setup Optimizer
+    # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
+    if args.pose_type == "euler":
+        lr_skel = 1e-2
+    else:
+        lr_skel = 1e-4
+    if SHCaster:
+        # optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-1}, {'params': grad_vars_skeletonpose, 'lr': 1e-1}], betas=(0.9,0.99))
+
+        #姿勢のみ
+        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+
+        #SHFieldのみ
+        # optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}], betas=(0.9,0.99))
+        # print(grad_vars_skeletonpose.params)
+        # exit("shcaster")
+    else:
+        optimizer = torch.optim.Adam(grad_vars_pcaster, betas=(0.9,0.99))
+
+    if True:
+        aabb = tensorf.ray_aabb
+        gridsize = 50
+
+        g = (torch.arange(gridsize)+1)/gridsize
+        g = g.to(device)
+        # print(g)
+
+        box = torch.ones(gridsize,gridsize,gridsize,3).to(device)
+
+        # print(box[...,0].shape, g.unsqueeze(0).unsqueeze(-1).shape)
+        box[...,0] *= g.unsqueeze(0).unsqueeze(0).repeat(gridsize, gridsize, 1)
+        box[...,1] *= g.unsqueeze(0).unsqueeze(-1).repeat(gridsize, 1, gridsize)
+        box[...,2] *= g.unsqueeze(-1).unsqueeze(-1).repeat(1, gridsize, gridsize)
+        for i in range(3):
+            box[...,i] *= torch.abs(aabb[0][i] - aabb[1][i])
+            box[...,i] += torch.min(aabb[0][i], aabb[1][i])
+        # box = box
+
+    
+    if args.bwf:
+        with torch.no_grad():
+            gridsize = 200
+
+            g = torch.arange(gridsize)+1
+            print(g)
+
+            box = torch.ones(gridsize,gridsize,gridsize,3)
+            # print(box[...,0].shape, g.unsqueeze(0).unsqueeze(-1).shape)
+            box[...,0] *= g.unsqueeze(0).unsqueeze(0).repeat(gridsize, gridsize, 1)
+            box[...,1] *= g.unsqueeze(0).unsqueeze(-1).repeat(gridsize, 1, gridsize)
+            box[...,2] *= g.unsqueeze(-1).unsqueeze(-1).repeat(1, gridsize, gridsize)
+            box /= gridsize
+            # print(box)
+            box = box.to(device)
+            box = (box - 0.5)*2
+
+            points = box.reshape(-1,3).unsqueeze(0).repeat(20,1,1)
+            print(points.shape)
+            points = pCaster_origin.sample_BWfield(points).reshape(-1, gridsize,gridsize,gridsize)
+            points = points.permute(1,2, 3, 0)
+            torch.save(points, f"{logfolder}/bwfield_{args.expname}.th")
+            print(points.shape)
+            exit()
+    # print("start training")
+    # print(allrays.shape, allrgbs.shape, num_frames)
+    # exit()
+    tensorf = tensorf.to(device)
+    
     for iteration in pbar:
-        #JOKE
+        # # JOKE skeleton_optim
         if iteration == 0 or (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-            # exit("exit")
             skeleton_props ={"skeleton_dataset": skeleton_dataset}
             PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
-            prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props)
+            prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props, device=device)
             summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
             print("JOKE")
-        # exit()
-        # #JOKE
+        exit("JOKEEXIT")
+        # # JOKE skeleton_optim
         
         # ray_idx = trainingSampler.nextids()
         # rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
@@ -507,10 +651,17 @@ def skeleton_optim(args):
         torch.cuda.empty_cache()
 
         idx = torch.randint(0, ray_per_img, size=[args.batch_size], device=device)
-        rays_train = torch.index_select(allrays[itr].to(device), 0, idx)
-        rgb_train = torch.index_select(allrgbs[itr].to(device), 0, idx)
-
-        skel = skeleton_dataset(itr)
+        rays_train = torch.index_select(allrays[itr+num_frames*rank_diff].to(device), 0, idx)
+        rgb_train = torch.index_select(allrgbs[itr+num_frames*rank_diff].to(device), 0, idx)
+        
+        if args.use_gt_skeleton:
+            skel = test_dataset.frame_poses[itr+num_frames*rank_diff]
+            # exit("why_")
+        else:
+            skel = skeleton_dataset(allanimframes[itr+num_frames*rank_diff])
+            # print(skel.shape)
+            # exit("skel")
+        
         tensorf.set_framepose(skel)
         skeleton_props ={"frame_pose": skel}
 
@@ -519,8 +670,33 @@ def skeleton_optim(args):
         #rgb_map, alphas_map, depth_map, weights, uncertainty
         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                                 N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
-
+        # exit("distman?")
         loss = torch.mean((rgb_map - rgb_train) ** 2)
+        # #あとで消す
+        # # print(skeleton_dataset(allanimframes[itr+num_frames*rank_diff]).shape)
+        # tmp_framepose = test_dataset.frame_poses[itr+num_frames*rank_diff]
+        # for j in skeleton.get_children():
+        #     apply_animation(tmp_framepose, j)
+        # gt_skeleton_pose = skeleton.get_listed_rotations(type ="quaternion")
+        # loss = torch.mean((gt_skeleton_pose - skeleton_dataset(allanimframes[itr+num_frames*rank_diff])) ** 2)
+        # #あとで消す
+
+
+        if not SHCaster:
+            tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)
+
+        
+            sigma = tensorf.get_density(box.reshape(-1,3))
+            weights = pCaster_origin.sample_BWfield(
+                pCaster_origin.normalize_coord(box.reshape(-1,3).unsqueeze(0).repeat(20,1,1))
+            )
+
+            # print(sigma.shape, weights.shape)
+            # exit()
+            loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
+            loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
+
+            loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
 
 
         # loss
@@ -550,6 +726,7 @@ def skeleton_optim(args):
         optimizer.step()
 
         loss = loss.detach().item()
+
         if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
             print("isnanisany", torch.isnan(total_loss).any(),  torch.isinf(total_loss).any())
         
@@ -570,17 +747,36 @@ def skeleton_optim(args):
                 + f' mse = {loss:.6f}'
             )
             PSNRs = []
+
+
+
+        # if dist_test and itr == 1:
+        #     with torch.no_grad():
+        #         rays_train = allrays[itr+num_frames*rank_diff]
+        #         rgb_train = allrgbs[itr+num_frames*rank_diff]
+        #         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.test_batch_size,
+        #                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
+        #         rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
+        #         gt_rgb = (rgb_train.cpu().numpy() * 255).astype('uint8')
+        #         H,W = train_dataset.img_wh
+        #         rgb_map = np.concatenate((rgb_map.reshape(H,W,3), gt_rgb.reshape(H,W,3)), axis=1)
+        #         imageio.imwrite(f'{logfolder}/{args.expname}_dist_test{iteration:03d}.png', rgb_map)
         
         #<Training> Test and Save the model.
         with torch.no_grad():
             if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-                skeleton_props ={"skeleton_dataset": skeleton_dataset}
-                PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props)
-                summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-                skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_{iteration}.th')
-                sh_joints.save(f'{logfolder}/{args.expname}_sh_{iteration}.th')
-                # tensorf.save(f'{logfolder}/{args.expname}.th')
-                # exit("EXITING")
+                if rank == rank_criteria:
+                    skeleton_props ={"skeleton_dataset": skeleton_dataset}
+                    PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
+                    summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
+                    # tensorf.save(f'{logfolder}/{args.expname}.th')
+                    # exit("EXITING")
+                    # if rank == 0:
+                    skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
+                    sh_field.save(f'{logfolder}/{args.expname}_sh.th')
+                    if not SHCaster:
+                        pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
+                    tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
 
 
 
@@ -621,10 +817,12 @@ def skeleton_optim(args):
         # exit()
         
     # exit("exit_before_save")
-    skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
-    sh_joints.save(f'{logfolder}/{args.expname}_sh.th')
-    tensorf.save(f'{logfolder}/{args.expname}.th')
-    
+    if rank == rank_criteria:
+        skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
+        sh_field.save(f'{logfolder}/{args.expname}_sh.th')
+        pCaster.save( f'{logfolder}/{args.expname}_pCaster.th')
+        tensorf.save(f'{logfolder}/{args.expname}.th')
+        
 
 
     if args.render_train:
@@ -650,6 +848,7 @@ def skeleton_optim(args):
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 
+
 if __name__ == '__main__':
 
     torch.set_default_dtype(torch.float32)
@@ -658,14 +857,27 @@ if __name__ == '__main__':
 
     args = config_parser()
     print(args)
+    rank_criteria = args.rank_criteria
 
     if  args.export_mesh:
         export_mesh(args)
 
     if args.render_only and (args.render_test or args.render_path):
-        render_test(args)
+        # render_test(args)
+        pass
     else:
-        reconstruction(args)
-        # skeleton_optim(args)
+        if args.data_preparation:
+            reconstruction(args)
+            exit()
+        if parallel:
+            os.environ['MASTER_ADDR'] = 'localhost'
+            os.environ['MASTER_PORT'] = '12355'
+            n_gpu = 2
+            mp.spawn(skeleton_optim,
+                args=(args, n_gpu),
+                nprocs=n_gpu,
+                join=True)
+        else:
+            skeleton_optim(rank_criteria, args)
 
 

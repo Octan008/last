@@ -1,0 +1,56 @@
+
+dataset_name = blender
+datadir = ./data/nerf_synthetic/anim
+expname =  tensorf_anim_VM_tvloss
+basedir = ./log
+add_timestamp = 1
+
+#ckpt = ./log/tensorf_shark_VM/tensorf_shark_VM.th
+#ckpt = ./cabin/tensorf_shark_VM.th
+ckpt = ./log/tensorf_anim_VM_traintest_shark/tensorf_anim_VM_traintest55.th
+ckpt_skeleton = ./log/tensorf_anim_VM_traintest2/tensorf_anim_VM_traintest2_skeleton.th
+ckpt_pcaster = ./log/tensorf_anim_VM_tvloss-20221116-063420/tensorf_anim_VM_tvloss_pCaster_it23999.th
+#sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
+n_iters = 30000
+#batch_size = 4096
+batch_size = 256
+test_batch_size = 4096
+progress_refresh_rate = 1
+
+N_voxel_init = 2097156 # 128**3
+N_voxel_final = 27000000 # 300**3
+upsamp_list = [2000,3000,4000,5500,7000]
+update_AlphaMask_list = [2000,4000]
+
+N_vis = 2
+vis_every = 2000
+step_ratio = 16
+#vis__every
+
+render_test = 1
+bwf = 1
+
+n_lamb_sigma = [16,16,16]
+n_lamb_sh = [48,48,48]
+model_name = TensorVMSplit
+
+
+
+shadingMode = SH
+
+fea2denseAct = softplus
+
+view_pe = 2
+fea_pe = 2
+
+L1_weight_inital = 8e-5
+L1_weight_rest = 4e-5
+rm_weight_mask_thre = 1e-4
+
+## please uncomment following configuration if hope to training on cp model
+#model_name = TensorCP
+#n_lamb_sigma = [96]
+#n_lamb_sh = [288]
+#N_voxel_final = 125000000 # 500**3
+#L1_weight_inital = 1e-5
+#L1_weight_rest = 1e-5

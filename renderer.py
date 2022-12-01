@@ -4,8 +4,10 @@ from dataLoader.ray_utils import get_rays
 from models.tensoRF import TensorVM, TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask
 from utils import *
 from dataLoader.ray_utils import ndc_rays_blender
+from nerf.render_util import *
 
 npz_point_cloud = False
+n_vis_offset = 1
 
 def crop_rays(ray, w, h, crop_box, rgb=None, filter = 1):
     print(ray.shape)
@@ -44,7 +46,6 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
     os.makedirs(savePath, exist_ok=True)
     os.makedirs(savePath+"/rgbd", exist_ok=True)
     test_evaluation = False
-
     try:
         tqdm._instances.clear()
     except Exception:
@@ -56,10 +57,13 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
 
     near_far = test_dataset.near_far
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
-    idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
+    # print(test_dataset.all_rays.shape[0])
+    # exit("exit_test")
+    idxs = list(range(n_vis_offset, test_dataset.all_rays.shape[0], img_eval_interval))
     tensorf.set_render_flags(jointmask = True)
-    for idx, samples in tqdm(enumerate(test_dataset.all_rays[0::img_eval_interval]), file=sys.stdout):
-
+    for idx, samples in tqdm(enumerate(test_dataset.all_rays[n_vis_offset::img_eval_interval].to(device)), file=sys.stdout):
+        # print("idx", idx)
+        # continue
         W, H = test_dataset.img_wh
         rays = samples.view(-1,samples.shape[-1])
         # exit("crop_ray")
@@ -67,15 +71,34 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
             rays = crop_rays(rays, W, H, [[200, 600], [200, 600]], filter = 10)
             W, H = (600-200)//10, (600-200)//10
         # exit("crop_ray")
-        if skeleton_dataset is not None:
-            skeleton_props = {"frame_pose": skeleton_dataset(idx)}
-        else:
-            skeleton_props = {"frame_pose": test_dataset.frame_poses[idx]}
-        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+
+        if not args.data_preparation:
+            if skeleton_dataset is not None and not args.use_gt_skeleton:
+                skeleton_props = {"frame_pose": skeleton_dataset(test_dataset.all_animFrames[idxs[idx]])}
+                for j in tensorf.skeleton.get_children():
+                    apply_animation(test_dataset.frame_poses[idxs[idx]], j)
+                gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
+                # exit("こっち")
+            else:
+                for j in tensorf.skeleton.get_children():
+                    apply_animation(test_dataset.frame_poses[idxs[idx]], j)
+                gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
+                skeleton_props = {"frame_pose": gt_skeleton_pose}
+                # print(gt_skeleton_pose.shape)
+            rgb_map_gtpose, _, depth_map_gtpose, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
+                        ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props={"frame_pose": gt_skeleton_pose}, is_render_only=is_render_only)
+            rgb_map_gtpose = rgb_map_gtpose.clamp(0.0, 1.0)
+            rgb_map_gtpose = rgb_map_gtpose.reshape(H, W, 3).cpu()
+            rgb_map_gtpose = (rgb_map_gtpose.numpy() * 255).astype('uint8')
+
+        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
                                         ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props=skeleton_props, is_render_only=is_render_only)
+
         rgb_map = rgb_map.clamp(0.0, 1.0)
+        
 
         rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
+        
 
         depth_map, _ = visualize_depth_numpy(depth_map.numpy(),near_far)
         if len(test_dataset.all_rgbs) and test_evaluation:
@@ -92,7 +115,15 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
                 l_vgg.append(l_v)
 
         rgb_map = (rgb_map.numpy() * 255).astype('uint8')
-        # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
+        
+        #GT と inf を一緒に保存
+        gt_rgb = (test_dataset.all_rgbs[idxs[idx]].view(H, W, 3).numpy() * 255).astype('uint8')
+        # rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
+        rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
+
+        if not args.data_preparation:
+            rgb_map = np.concatenate((rgb_map, rgb_map_gtpose), axis=1)
+
         rgb_maps.append(rgb_map)
         depth_maps.append(depth_map)
         if savePath is not None:
@@ -102,18 +133,18 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
         if npz_point_cloud:
             raise ValueError("interrupt");
 
-    imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)
-    imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)
+    # imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)
+    # imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)
 
-    if PSNRs:
-        psnr = np.mean(np.asarray(PSNRs))
-        if compute_extra_metrics:
-            ssim = np.mean(np.asarray(ssims))
-            l_a = np.mean(np.asarray(l_alex))
-            l_v = np.mean(np.asarray(l_vgg))
-            np.savetxt(f'{savePath}/{prtx}mean.txt', np.asarray([psnr, ssim, l_a, l_v]))
-        else:
-            np.savetxt(f'{savePath}/{prtx}mean.txt', np.asarray([psnr]))
+    # if PSNRs:
+    #     psnr = np.mean(np.asarray(PSNRs))
+    #     if compute_extra_metrics:
+    #         ssim = np.mean(np.asarray(ssims))
+    #         l_a = np.mean(np.asarray(l_alex))
+    #         l_v = np.mean(np.asarray(l_vgg))
+    #         np.savetxt(f'{savePath}/{prtx}mean.txt', np.asarray([psnr, ssim, l_a, l_v]))
+    #     else:
+    #         np.savetxt(f'{savePath}/{prtx}mean.txt', np.asarray([psnr]))
 
 
     return PSNRs
