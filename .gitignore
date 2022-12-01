@@ -2,6 +2,10 @@
 *.pth
 *.th
 log/
+refreshlog/
+log_trash/
+log_oldall_old/
+strage_log/
 cabin/
 ckpt/
 cub-1.10.0/
