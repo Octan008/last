@@ -72,69 +72,113 @@ def euler_to_quaternion(r):
     
 
 def compute_weights(xyzs, joints):
+    #xyzs, reshaped(-1,3)
     weights_list = []
     for j in joints:
-        weights = (xyzs - j.global_pos(ngp=True)).to(torch.float16).to(my_torch_device)
+        weights = (xyzs - j.global_pos(ngp=True)).to(torch.float32).to(xyzs.device)
         weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
-        weights = torch.exp(-weights*1)
+        weights = torch.exp(-weights*0.5)
         weights_list.append(weights)
-        
+        # print(j.name, j.global_pos(ngp=True), weights.shape)
+        # print(torch.min(weights))
+        # print(torch.max(weights))
+        # print()
+    
     weights_list = torch.stack(weights_list, dim=0)
+    # exit("render_util, compute_weights")
     return torch.transpose(weights_list, 0, 1)
 
-# def weighted_transformation(xyzs, weights, transforms):
-#     #xyzs -> [N, 3]
-#     #weights -> [N, J]
-#     #transforms -> [J, 4, 4]
-#     #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
-    
-#     weights_sum = weights.sum(dim=1)
-#     # print("minmax",torch.max(weights), torch.min(weights))
-#     # print("minmax",torch.max(weights_sum), torch.min(weights_sum))
-#     n_sample = xyzs.shape[0]
-#     n_joint = transforms.shape[0]
-#     eps = 1e-7
-#     non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
-
-#     valid = ~non_valid
-#     # validT = torch.transpose(valid, 0, 1);
-#     underOne = weights_sum < 1.0
-
-#     original_weights = torch.where(~underOne, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-#     weights_sum =  torch.where(weights_sum < eps, torch.ones_like(weights_sum), weights_sum)
-#     # weights_sum =  torch.where(weights_sum < 1.0, torch.ones_like(weights_sum), weights_sum)
-#     # weights_sum =  torch.where(underOne, torch.ones_like(weights_sum), weights_sum)
-
-#     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
-#     # weights = weights/weights_sum.unsqueeze(1)
-#     # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-    
-    
-
-#     result = xyzs * original_weights.unsqueeze(-1)
-#     # result = torch.zeros_like(xyzs) #[N, 3]
-#     xyzs = torch.transpose(xyzs, 0, 1) #[4, N]
-    
-#     xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(0).to(xyzs.device)], dim=-0)#[4, N]
-    
-#     # 
-    
-#     # print(result.shape)
-#     # print(torch.nan_to_num(torch.transpose(torch.matmul(transforms[0], xyzs), 0, 1)  * weights[:,0].unsqueeze(1))[:,:3].shape)
-#     # exit()
-#     result += torch.nan_to_num(torch.transpose(torch.matmul(transforms[0], xyzs), 0, 1)  * weights[:,0].unsqueeze(1))[:,:3]
-#     # tmp_ =  validT[0].unsqueeze(0).expand(4, -1)
-#     # print("res", result[valid].shape)
-#     for i in range(1, transforms.shape[0]):
-#         # if result[valid].shape[0] == 0:
-#         #     break
-#         # result[valid] += torch.nan_to_num(torch.transpose(torch.matmul(transforms[i], xyzs[validT[0].unsqueeze(0).expand(4, -1)].reshape(4, -1)), 0, 1)[...,:3].reshape(n_sample*3)  * weights[:,i][valid[:,0]].unsqueeze(1))
-#         result += torch.nan_to_num(torch.transpose(torch.matmul(transforms[i], xyzs), 0, 1)[...,:3]  * weights[:,i].unsqueeze(1))[...,:3]
-
-#     # result[non_valid] = torch.transpose(xyzs, 0, 1)[...,:3][non_valid]
-#     return result
-
 def weighted_transformation(xyzs, weights, transforms):
+    #xyzs -> [N, 3]
+    #weights -> [N, J]
+    #transforms -> [J, 4, 4]
+    #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
+    
+    weights_sum = weights.sum(dim=1)
+    # print("minmax",torch.max(weights), torch.min(weights))
+    # print("minmax",torch.max(weights_sum), torch.min(weights_sum))
+    n_sample = xyzs.shape[0]
+    n_joint = transforms.shape[0]
+    eps = 1e-7
+    non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
+
+    # valid = ~non_valid
+    # validT = torch.transpose(valid, 0, 1);
+    # underOne = weights_sum < 1.0
+
+    # original_weights = torch.where(~underOne, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
+    weights_sum =  torch.where(weights_sum < eps, torch.ones_like(weights_sum), weights_sum)
+    # weights_sum =  torch.where(weights_sum < 1.0, torch.ones_like(weights_sum), weights_sum)
+    # weights_sum =  torch.where(underOne, torch.ones_like(weights_sum), weights_sum)
+
+    # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
+    weights = weights/weights_sum.unsqueeze(1)
+    # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
+    
+    
+    xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
+
+    # tmp = torch.matmul(transforms, torch.matmul(weights.unsqueeze(-1), xyzs.unsqueeze(1)).permute(1,2,0)).sum(dim=0).squeeze()
+    # transforms : [J, 4, 4]
+    # weights : [N, J]
+    # xyzs : [N, 4]
+    # print("fdfsa", torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).shape)
+    
+    tmp = torch.matmul(torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4), xyzs.unsqueeze(-1))
+    result = tmp.squeeze()[...,:3]
+
+    result[non_valid] = xyzs[...,:3][non_valid]
+    return result
+
+def fff_weighted_transformation(xyzs, weights, transforms):
+    #xyzs -> [N, 3]
+    #weights -> [N, J]
+    #transforms -> [J, 4, 4]
+    #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
+    
+    weights_sum = weights.sum(dim=1)
+    # print("minmax",torch.max(weights), torch.min(weights))
+    # print("minmax",torch.max(weights_sum), torch.min(weights_sum))
+    n_sample = xyzs.shape[0]
+    n_joint = transforms.shape[0]
+    eps = 1e-7
+    non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
+
+    valid = ~non_valid
+    # validT = torch.transpose(valid, 0, 1);
+    underOne = weights_sum < 1.0
+
+    original_weights = torch.where(~underOne, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
+    weights_sum =  torch.where(weights_sum < eps, torch.ones_like(weights_sum), weights_sum)
+    # weights_sum =  torch.where(weights_sum < 1.0, torch.ones_like(weights_sum), weights_sum)
+    # weights_sum =  torch.where(underOne, torch.ones_like(weights_sum), weights_sum)
+
+    # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
+    weights = weights/weights_sum.unsqueeze(1)
+    # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
+    
+    
+
+    # result = xyzs * original_weights.unsqueeze(-1)
+    result = torch.zeros_like(xyzs) #[N, 3]
+    xyzs = torch.transpose(xyzs, 0, 1) #[4, N]
+    
+    xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(0).to(xyzs.device)], dim=-0)#[4, N]
+
+
+    result += torch.nan_to_num(torch.transpose(torch.matmul(transforms[0], xyzs), 0, 1)  * weights[:,0].unsqueeze(1))[:,:3]
+    # tmp_ =  validT[0].unsqueeze(0).expand(4, -1)
+    # print("res", result[valid].shape)
+    for i in range(1, transforms.shape[0]):
+        if result[valid].shape[0] == 0:
+            break
+        # result[valid] += torch.nan_to_num(torch.transpose(torch.matmul(transforms[i], xyzs[validT[0].unsqueeze(0).expand(4, -1)].reshape(4, -1)), 0, 1)[...,:3].reshape(n_sample*3)  * weights[:,i][valid[:,0]].unsqueeze(1))
+        result += torch.nan_to_num(torch.transpose(torch.matmul(transforms[i], xyzs), 0, 1)[...,:3]  * weights[:,i].unsqueeze(1))[...,:3]
+
+    result[non_valid] = torch.transpose(xyzs, 0, 1)[...,:3][non_valid]
+    return result
+
+def _weighted_transformation(xyzs, weights, transforms):
     #xyzs -> [N, 3]
     #weights -> [N, J]
     #transforms -> [J, 4, 4]
@@ -266,7 +310,7 @@ def make_joints_from_blender(file_path, device="cuda"):
     bind = bind.to(torch.float32)
     skeleton = Joint(
             bind_pose = bind,
-            parent_bind=torch.eye(4, dtype=torch.float16, device=torch.device(my_torch_device)),
+            parent_bind=torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
             name = root["name"],
             device=device
         )
@@ -281,7 +325,7 @@ def cast_positions(positions, joints, weights_list = None):
     if weights_list is None:
         weights_list = []
         for j in joints:
-            weights = (positions - j.global_pos(ngp=True)).to(torch.float16).to(my_torch_device)
+            weights = (positions - j.global_pos(ngp=True)).to(torch.float32).to(my_torch_device)
             weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
             weights = torch.exp(-weights*10)
             weights_list.append(weights)
@@ -312,7 +356,6 @@ def euler_to_matrix(angle = None, translate = None):
     mat = torch.eye(4, device=torch.device(my_torch_device))
     
     if translate is not None:
-        print(mat[:3, 3].shape, translate.shape)
         mat[:3, 3] = translate
     if angle is not None:
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
@@ -328,6 +371,38 @@ def euler_to_matrix(angle = None, translate = None):
             [0.0,0.0,0.0,1.0], device=angle.device
         ).unsqueeze(1)], dim=1)
 
+def euler_to_matrix_batch(angle = None):
+    # mat = torch.eye(4, device=torch.device(my_torch_device))
+    
+    # if translate is not None:
+    #     print(mat[:3, 3].shape, translate.shape)
+    #     mat[:3, 3] = translate
+    
+    if angle is not None:
+        sx, sy, sz = torch.sin(torch.deg2rad(angle))
+        cx, cy, cz = torch.cos(torch.deg2rad(angle))
+        # print(torch.stack([cy*cz,  -cy*sz,   sy],dim=0).shape)
+        # print(torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1]).shape)
+        # print(torch.stack([
+        #     torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
+        #     torch.stack([cx*sz+cz*sx*sy, cx*cz-sx*sy*sz,   -cy*sx],dim=0),
+        #     torch.stack([sx*sz-cx*cz*sy,   cz*sx+cx*sy*sz, cx*cy],dim=0),
+        #     torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1])
+        # ], dim=0).shape)
+        # print(torch.tensor(
+        #     [0.0,0.0,0.0,1.0], device=angle.device
+        # ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[1]).shape)
+        # exit("fff")
+        return torch.cat([
+        torch.stack([
+            torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
+            torch.stack([cx*sz+cz*sx*sy, cx*cz-sx*sy*sz,   -cy*sx],dim=0),
+            torch.stack([sx*sz-cx*cz*sy,   cz*sx+cx*sy*sz, cx*cy],dim=0),
+            torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1])
+        ], dim=0), torch.tensor(
+            [0.0,0.0,0.0,1.0], device=angle.device
+        ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[1])], dim=1)
+
 
 def make_transform(angle=None, translate = None):
     # return euler_to_matrix_old(angle, translate)
@@ -335,10 +410,11 @@ def make_transform(angle=None, translate = None):
 #
 
 def each_dot(a,b):
-    tmp = torch.zeros_like(a[...,0])
-    for i in range(a.shape[-1]):
-        tmp += a[...,i] * b[...,i]
-    return tmp
+    # tmp = torch.zeros_like(a[...,0])
+    # for i in range(a.shape[-1]):
+    #     tmp += a[...,i] * b[...,i]
+    # return tmp
+    return torch.sum(a*b, dim=-1)
 
 
 class Joint():
@@ -369,6 +445,7 @@ class Joint():
         self.children = []
         self.markers = []
         self.local_transform_cached = self.local_transform()
+        self.root = False
 
         self.markers = [
             torch.mv(self.global_transform(), self.mytensor([0.05,    0,    0, 1])),
@@ -376,6 +453,10 @@ class Joint():
             torch.mv(self.global_transform(), self.mytensor([   0,    0, 0.05, 1]))
         ]
         self.first_pos = self.global_pos();
+    def set_as_root(self):
+        self.root = True
+        self.joints = listify_skeleton(self)
+
 
     def compute_depth(self, parent_depth):
         self.depth = parent_depth+1
@@ -457,6 +538,22 @@ class Joint():
             return input
         else:
             return self.euler_to_matrix(input)
+    def get_invs(self, parent=None):
+        if parent is not None:
+            t = torch.matmul(parent, self.local_transform())
+        else:
+            t = torch.matmul(self.parent_transform, self.local_transform())
+
+        res = [affine_inverse(torch.matmul(t, self.bind_inv), self.device)]
+
+        # print("compute_inv : ", time.perf_counter() - comp_start)
+
+        for c in self.children:
+            res.extend(c.get_invs(parent=t))
+        if parent is not None:
+            return res
+        else:
+            return torch.stack(res, dim=0)
 
     def rotations_to_invs(self, poses, parent=None, type="euler"):
         # etm_start = time.perf_counter()
@@ -623,7 +720,10 @@ class Joint():
             res.extend(c.get_tail_ids())
         return res
 
-
+        
+    def set_tails(self, tails):
+        self.tails = tails
+    
     def draw_mask(self, rays_o, rays_d, radius, point = None):
         if point is None:
             center = self.global_pos()
@@ -642,9 +742,30 @@ class Joint():
 
         mask2 = t >= 0.0
         return torch.logical_and(mask, mask2)
-        
-    def set_tails(self, tails):
-        self.tails = tails          
+
+    def draw_mask_batched(self, rays_o, rays_d, radius, centers):
+        #centers: J, 3
+        #rays_o: B, 3
+        rays_o = rays_o.unsqueeze(0).repeat(centers.shape[0], 1, 1)
+        rays_d = rays_d.unsqueeze(0).repeat(centers.shape[0], 1, 1)
+        v2 = each_dot(rays_d, rays_d) #J, B
+        xc = rays_o - centers.unsqueeze(1).expand(rays_o.shape) #J, B, 3
+        r2 = radius ** 2
+        d = each_dot(rays_d, xc) ** 2 -(v2 * (each_dot(xc,xc) - r2))
+        mask = d >= 0.0
+        t = each_dot(-rays_d,xc) - torch.sqrt(d)
+
+        mask2 = t >= 0.0
+        return torch.logical_and(mask, mask2).sum(dim=0) > 0
+
+    def draw_mask_all_cached(self, rays_o, rays_d, radius):
+        # print(rays_o.shape, rays_d.shape)
+        tmp = self.precomp_forward_global_transforms[:,:3,3]
+        # tmp = self.get_listed_positions(/)
+        # print(tmp.shape)
+        return self.draw_mask_batched(rays_o, rays_d, radius, tmp)
+
+
       
     def draw_mask_all(self, rays_o, rays_d, radius):
         mask = self.draw_mask(rays_o, rays_d, radius)
@@ -696,8 +817,29 @@ class Joint():
         form = depth//2
         return torch.bmm(self.tree_mul(mat[:, :form], form), self.tree_mul(mat[:, form:], depth-form))
 
+    def apply_transforms_top(self, poses, use_precomp = True, type="euler"):
+        if type=="quaternion":
+            poses = quaternion_to_matrix_batch(poses).permute(2,0,1)
+        elif type=="euler":
+            poses = euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1)
+        if use_precomp:
+            for i, j in enumerate(self.joints):
+                j.apply_transform(self.precomp_forward_global_transforms[i], only_self=True)
+            return
+        for i, j in enumerate(self.joints):
+            j.apply_transform(poses[i], only_self=False)
+
+
+
     def rotations_to_invs_fast(self, poses, type="quaternion"):
-        animations = torch.transpose(torch.transpose(quaternion_to_matrix_batch(poses), 0,2), 1, 2)
+        # print(poses.shape, type)
+        # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)
+
+        # exit("rotations_to_invs_fast")
+        if type=="quaternion":
+            animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
+        elif type=="euler":
+            animations = euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1)
         #[J, 4, 4]
         mats2 = self.myeye(4).repeat(self.precomp_num_joints, self.precomp_depth, 1, 1)
         #[J, D, 4, 4] / Dは最大のskeletonの深さ
@@ -710,8 +852,10 @@ class Joint():
         mat = torch.bmm(self.precomp_mats.reshape(self.precomp_num_joints*self.precomp_depth, 4, 4), mats2.reshape(self.precomp_num_joints*self.precomp_depth, 4, 4)).reshape(self.precomp_num_joints, self.precomp_depth, 4, 4)
         # 計算id行列上の同じ位置のもの同士、initial_transform と 回転行列をかけて一定化
         # 最終的には縦に掛けていけば各joint の transformが手に入る状態に
-
-        return affine_inverse_batch(torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs), self.device)
+        # self.precomp_forward_global_transforms = torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs)
+        self.precomp_forward_global_transforms = self.tree_mul(mat, self.precomp_depth)
+        return affine_inverse_batch(torch.bmm(self.precomp_forward_global_transforms, self.precomp_bindinvs))
+        # return affine_inverse_batch(torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs), self.device)
 
 
 
@@ -763,7 +907,7 @@ class Joint():
 #             #bind pose
 #             self.bind = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
 #             self.bind[:,3] = self.p
-#             self.bind_inv = torch.linalg.pinv(self.bind.float()).to(torch.float16)
+#             self.bind_inv = torch.linalg.pinv(self.bind.float()).to(torch.float32)
 
 #             #parent_transform
 #             self.parent_transform = parent_t.to(my_torch_device)
@@ -788,7 +932,7 @@ class Joint():
 #             self.S = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
 
 #             #bind pose
-#             self.bind_inv = torch.linalg.pinv(self.bind.float()).to(torch.float16)
+#             self.bind_inv = torch.linalg.pinv(self.bind.float()).to(torch.float32)
 
 #             #parent_transform
 #             self.parent_transform = torch.tensor(parent_t,  dtype=torch.float32, device=torch.device(my_torch_device))
@@ -807,7 +951,7 @@ class Joint():
 
 
 #     def inv_totalmatrix(self):
-#         return torch.linalg.pinv(torch.matmul(self.global_matrix(), self.bind_inv).float()).to(torch.float16)
+#         return torch.linalg.pinv(torch.matmul(self.global_matrix(), self.bind_inv).float()).to(torch.float32)
 
 
 
@@ -828,7 +972,7 @@ class Joint():
 #     def get_bind(self):
 #         return self.bind
 #     def get_bind_inv(self):
-#         return torch.linalg.pinv(self.bind.float()).to(torch.float16)
+#         return torch.linalg.pinv(self.bind.float()).to(torch.float32)
     
 #     def decode_transform(self, transform):
 #         r = torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device))
@@ -884,7 +1028,7 @@ class Joint():
 #         return torch.matmul(self.parent_transform, self.localTransform)
 #     def global_matrix_inv(self):
 
-#         return torch.linalg.pinv(self.global_matrix().float()).to(torch.float16)
+#         return torch.linalg.pinv(self.global_matrix().float()).to(torch.float32)
     
 
 #     def draw_mask(self, rays_o, rays_d, radius, point = None):
@@ -905,7 +1049,7 @@ class Joint():
 #         return torch.logical_and(mask, mask2)
 
 # def sphere_mask(rays_o, rays_d, center, radius):
-#     center = torch.tensor(center,  dtype=torch.float16, device=torch.device(my_torch_device))
+#     center = torch.tensor(center,  dtype=torch.float32, device=torch.device(my_torch_device))
 #     v2 = each_dot(rays_d, rays_d)
 #     xc = rays_o - center
 #     r2 = radius ** 2
@@ -1001,7 +1145,7 @@ class Joint():
 #     bind_transform = root["bind_transform"]
 #     relative_transform = root["relative_transform"]
 #     skeleton = Joint(
-#         parent_t = torch.eye(4, dtype=torch.float16, device=torch.device(my_torch_device)),
+#         parent_t = torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
 #         bind_matrix = bind_transform,
 #         relative_transform=relative_transform,
 #         name=root["name"]
@@ -1018,7 +1162,7 @@ class Joint():
 #     return mask
 
 # def mask_point(src, ref_point, half_width):
-#     p = src - torch.tensor(ref_point, dtype=torch.float16, device=torch.device(my_torch_device))
+#     p = src - torch.tensor(ref_point, dtype=torch.float32, device=torch.device(my_torch_device))
 #     length = p[...,0] ** 2 + p[...,1] ** 2 + p[...,2] ** 2
 #     mask = length < (half_width ** 2)
 #     return mask

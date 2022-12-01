@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 # from ..utils.lie_group_helper import make_c2w
+from .render_util import *
 
 
 class LearnSkeletonPose(nn.Module):
-    def __init__(self, num_frames, num_joints, learn=True, init_c2w=None, type="rotation"):
+    def __init__(self, num_frames, num_joints, learn=True, init_c2w=None, type="euler"):
         """
         :param num_cams:
         :param learn_R:  True/False
@@ -19,9 +20,10 @@ class LearnSkeletonPose(nn.Module):
         self.if_pin = False
         self.pins = []
         self.pins_dict = {}
-        if type=="rotation":
+        self.type = type
+        if type=="euler":
             self.pose = nn.Parameter(torch.zeros(size=(num_frames, num_joints, 3), dtype=torch.float32), requires_grad=learn)  # (N, j, 3)
-            
+            # exit("not implemented")
         elif type=="quaternion":
             # exit("not implemented")
             #Todo: switch
@@ -29,7 +31,7 @@ class LearnSkeletonPose(nn.Module):
             tmp = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32).unsqueeze(0).unsqueeze(0).repeat(num_frames, num_joints, 1)
             # self.pose = nn.Parameter(torch.zeros(size=(num_frames, num_joints, 4), dtype=torch.float32), requires_grad=learn)  # (N, j, 3)
             self.pose = nn.Parameter(tmp, requires_grad=learn)  # (N, j, 3)
-        
+            # exit("not implemented2")
         elif type=="matrix":
             tmp = torch.eye(4, dtype=torch.float32).unsqueeze(0).unsqueeze(0).repeat(num_frames, num_joints, 4, 4)
             self.pose = nn.Parameter(tmp, requires_grad=learn)  # (N, j, 3)
@@ -59,18 +61,26 @@ class LearnSkeletonPose(nn.Module):
         self.load_state_dict(ckpt['state_dict'], strict = False)
 
     def forward(self, frame_id):
-        if self.if_pin and frame_id in self.pins:
-            return self.pins_dict[frame_id.item()].squeeze()
+        # if self.if_pin and frame_id in self.pins:
+        #     return self.pins_dict[frame_id.item()].squeeze()
+        if self.type == "euler":
+            return self.pose[frame_id].squeeze()  # (j, 3, ) axis-angle
         if True:
-            quat = self.pose[frame_id, :, :].squeeze() #j, 4
-            with torch.no_grad():
-                for t in self.tails:
-                    quat[t] *= 0
+            quat = self.pose[frame_id, :, :].squeeze() #j, 3
+            # with torch.no_grad():
+            #     for t in self.tails:
+            #         quat[t] *= 0
             norm2 = torch.sum(quat*quat, dim=-1) # j positive value
             ws = (1 - norm2).unsqueeze(-1) #j
             ws = torch.where(ws < 0.0, torch.zeros_like(ws), ws)
             ws = torch.sqrt(ws)
             q = torch.cat([ws, quat], dim=-1)
             return q
+        else:
+            quat = self.pose[frame_id, :, :].squeeze() #j, 3
+            q = euler_to_quaternion(quat.T).T
+            # print(q.shape)
+            # exit("ff")
+            return q
+            
 
-        return self.pose[frame_id].squeeze()  # (j, 3, ) axis-angle

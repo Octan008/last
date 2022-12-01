@@ -5,7 +5,7 @@ from .sh import eval_sh_bases
 import numpy as np
 import time
 from nerf.render_util import *
-from models.sh_joints import SphereHarmonicJoints
+from models.sh_field import SphereHarmonicJoints
 import glob
 
 
@@ -36,7 +36,6 @@ def tv_loss_func_line(image, weight = 1.0):
     
     tv_h = torch.abs(tv_h[:,1:,:] - tv_h[:,:-1,:]).sum()
     return weight * (tv_h) * weight
-
 
 
 
@@ -151,7 +150,7 @@ class BWCaster(nn.Module):
         return F.relu(torch.stack(feats))
     
     def compute_weights(self, xyz, features, invs, locs):
-        # return compute_weights(xyz, self.joints).to(torch.float32)
+        # return compute_weisghts(xyz, self.joints).to(torch.float32)
 
        
         xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
@@ -186,6 +185,7 @@ class shCaster(nn.Module):
     def __init__(self):
         super().__init__()
         self.sh_feats = None
+        self.use_distweight = False
     def set_skeleton(self, skeleton):
         self.skeleton = skeleton
     def set_aabbs(self, aabb, rayaabb):
@@ -196,16 +196,30 @@ class shCaster(nn.Module):
         self.ray_aabb = rayaabb
         self.rayaabbSize = self.ray_aabb[1] - self.ray_aabb[0]
         self.invrayaabbSize = 2.0/self.rayaabbSize
+        
+    def set_usedistweight(self, use_distweight):
+        self.use_distweight = use_distweight
 
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+        # time_st = time.perf_counter()
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.reshape(-1, 3).shape[0]
         tmp = torch.cat([xyz_sampled.reshape(-1, 3),(xyz_sampled-viewdirs).reshape(-1, 3)], dim=0)
         self.joints = listify_skeleton(self.skeleton)
-        weights = self.get_SH_vals(xyz_sampled.reshape(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
+        if self.use_distweight:
+            weights = compute_weights(xyz_sampled.reshape(-1,3), self.joints).to(torch.float32)
+            # print("distweightsman")
+        else:
+            # print("not distweightsman")
+            weights = self.get_SH_vals(xyz_sampled.reshape(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
         if(weights.isnan().any()):
             ValueError("weights is nan")
         weights = torch.cat([weights, weights], dim=0)
+        # time_en =  time.perf_counter()
+        # print("weights time", time_en - time_st)
+
+        # time_st = time.perf_counter()
+
         # taihi = tmp
         tmp =  weighted_transformation(tmp, weights, transforms)
         if(tmp.isnan().any() or tmp.isinf().any()):
@@ -215,10 +229,16 @@ class shCaster(nn.Module):
         xyz_sampled = xyz_sampled.reshape(shape[0],shape[1], 3)
         viewdirs = viewdirs.reshape(shape[0],shape[1], 3)
         self.weights = weights
+        # time_en =  time.perf_counter()
+        # print("cast time", time_en - time_st)
         return xyz_sampled, viewdirs
             
     def set_SH_feats(self, feats):
         self.sh_feats = feats
+
+    def set_allgrads(self, value):
+        for param in self.sh_feats:
+            param.requires_grad = value
 
     def get_weights(self):
         return self.weights

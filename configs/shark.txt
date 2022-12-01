@@ -1,19 +1,30 @@
 
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  tensorf_anim_VM_sh
-basedir = ./log
-add_timestamp = 1
+expname =  ngp_implementation
+shcaster = 1
+use_gt_skeleton = 0
+basedir = ./refreshlog
+add_timestamp = 0
+pose_type = euler
+data_preparation = 0
+rank_criteria = 0
 
-#ckpt = ./log/tensorf_shark_VM/tensorf_shark_VM.th
-#ckpt = ./cabin/tensorf_shark_VM.th
-ckpt = ./log/tensorf_anim_VM_traintest_shark/tensorf_anim_VM_traintest55.th
+#ckpt = ./log/tensorf_shark_VM/tensorf_shark_VM.th#これなに
+#ckpt = ./cabin/tensorf_shark_VM.th #これなに
+
+#ckpt = ./log/tensorf_anim_VM_traintest_shark/tensorf_anim_VM_traintest55.th #SH-nerf
+#ckpt = ./cabin/tensorf_anim_shark_nerf/tensorf_anim_VM_1127_distweights.th #MLP-NeRF
+
+
 #ckpt_skeleton = ./log/tensorf_anim_VM_traintest2/tensorf_anim_VM_traintest2_skeleton.th
+#ckpt_skeleton = ./log/tensorf_anim_VM_train_by_distweight-20221123-122948/tensorf_anim_VM_train_by_distweight_skeleton_it3999.th
 #ckpt_pcaster = ./log/tensorf_anim_VM_pcasterPole/tensorf_anim_VM_traintest001_pCaster.th
 #sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
-n_iters = 30000
+
+n_iters = 300000
 #batch_size = 4096
-batch_size = 256
+batch_size = 1024
 test_batch_size = 1024
 progress_refresh_rate = 1
 
@@ -23,8 +34,8 @@ upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
 N_vis = 2
-vis_every = 200
-step_ratio = 16
+vis_every = 2000
+step_ratio = 2
 #vis__every
 
 render_test = 1
@@ -33,9 +44,11 @@ n_lamb_sigma = [16,16,16]
 n_lamb_sh = [48,48,48]
 model_name = TensorVMSplit
 
+ckpt_ngp = ./torchngp/shark_testtest/checkpoints/ngp.pth.tar
 
-
+#shadingMode = MLP_Fea
 shadingMode = SH
+ngp_render = 1
 
 fea2denseAct = softplus
 
