@@ -140,16 +140,8 @@ class TensorVMSplit(TensorBase):
 
 
     def init_svd_volume(self, res, device):
-<<<<<<< HEAD
         self.density_plane, self.density_line = self.init_one_svd(self.density_n_comp, self.gridSize, 0.1, device, name="density")
         self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device, name="app")
-=======
-        print("TensoRF")
-        print(self.density_n_comp, self.app_n_comp)
-        # exit()
-        self.density_plane, self.density_line = self.init_one_svd(self.density_n_comp, self.gridSize, 0.1, device)
-        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
->>>>>>> merging
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
         #
 
