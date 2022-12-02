@@ -469,6 +469,7 @@ class TensorBase(torch.nn.Module):
             mask_outbbox = ((self.ray_aabb[0]>rays_pts) | (rays_pts>self.ray_aabb[1])).any(dim=-1)
 
         return rays_pts, interpx, ~mask_outbbox
+
     def clamp_pts(self, pts):
         # pts : [N_rays, N_samples, 3]
         if self.data_preparation:
@@ -605,17 +606,17 @@ class TensorBase(torch.nn.Module):
 
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1, skeleton_props=None, is_render_only=False):
-# <<<<<<< HEAD
-#         self.stepSize = self.stepSize.to(rays_chunk.device)
-#         self.aabb = self.aabb.to(rays_chunk.device)
-#         self.invaabbSize = self.invaabbSize.to(rays_chunk.device)
-#         self.device = rays_chunk.device
-# =======
-# >>>>>>> merging
+        # <<<<<<< HEAD
+        #         self.stepSize = self.stepSize.to(rays_chunk.device)
+        #         self.aabb = self.aabb.to(rays_chunk.device)
+        #         self.invaabbSize = self.invaabbSize.to(rays_chunk.device)
+        #         self.device = rays_chunk.device
+        # =======
+        # >>>>>>> merging
         # <sample points> -> xyz, viewdirs
         
         if True:
-            N_samples *= 10
+            # N_samples *= 10
             viewdirs = rays_chunk[:, 3:6]
             if ndc_ray:
                 xyz_sampled, z_vals, ray_valid = self.sample_ray_ndc(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
@@ -694,7 +695,7 @@ class TensorBase(torch.nn.Module):
 
             # dist weights
             # self.caster.set_joints(self.joints)
-            if_cast = False
+            if_cast = True
             if if_cast:
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid)
                 # self.clamp_pts(self, xyz_sampled)
@@ -707,7 +708,8 @@ class TensorBase(torch.nn.Module):
                 save_npz["weights"] = self.caster_weights.cpu().numpy()
                 save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
 
-        
+        # print(self.use_ngprender)
+        # exit("debug_self.use_ngprender:")
         # Compute_sigma
         if ray_valid.any():
             if self.use_ngprender:
@@ -874,6 +876,7 @@ class TensorBase(torch.nn.Module):
             if not self.data_preparation and save_npz:
                 save_npz["sigma"] = sigma.cpu().numpy()
             self.sigma = sigma
+            # exit("amkingmasking")
 
 
 
@@ -889,7 +892,7 @@ class TensorBase(torch.nn.Module):
             # weight_slice =  weights.reshape(rgb.shape[0], -1, weights.shape[-1]).shape[1]//2
             # rgb[...,1:] = 0
             # rgb[...,0] = weights.reshape(rgb.shape[0], -1, weights.shape[-1])[:,:,2] * 1000
-            # exit()
+            
 
             
             # rgb[inside][...,0] = 1.0;
@@ -923,7 +926,7 @@ class TensorBase(torch.nn.Module):
 
         if not self.data_preparation:
             if draw_joints:
-                rgb_map[mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=rgb_map.device)
+                rgb_map[draw_mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=rgb_map.device)
 
 
         return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight

@@ -201,7 +201,7 @@ class shCaster(nn.Module):
         self.use_distweight = use_distweight
 
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
-        return xyz_sampled, viewdirs
+        # return xyz_sampled, viewdirs
         # time_st = time.perf_counter()
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.reshape(-1, 3).shape[0]

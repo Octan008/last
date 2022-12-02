@@ -77,8 +77,8 @@ class BlenderDataset(Dataset):
         for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'):#img_list:#
 
             frame = self.meta['frames'][i]
-            # pose = np.array(frame['transform_matrix']) @ self.blender2opencv
-            pose = nerf_matrix_to_ngp(np.array(frame['transform_matrix']))
+            pose = np.array(frame['transform_matrix']) @ self.blender2opencv
+            # pose = nerf_matrix_to_ngp(np.array(frame['transform_matrix']))
             c2w = torch.FloatTensor(pose)
             self.poses += [c2w]
             self.frame_poses += [frame['animation']]

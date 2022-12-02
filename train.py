@@ -487,10 +487,10 @@ def skeleton_optim(rank, args, n_gpu = 1):
     tensorf.set_allgrads(False)
     tensorf.use_gt_skeleton = args.use_gt_skeleton
 
-    #NGPRender Setting
-    tensorf.set_ngprender(args.ngp_render)
-    if args.ckpt_ngp is not None:
-        tensorf.load(args.ckpt_ngp)
+    # #NGPRender Setting
+    # tensorf.set_ngprender(args.ngp_render)
+    # if args.ckpt_ngp is not None:
+    #     tensorf.load(args.ckpt_ngp)
 
     
     sh_field = SphereHarmonicJoints(len(joints), 9)
@@ -536,7 +536,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     # skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
     if args.ckpt_skeleton is not None:
         skeleton_dataset.load(torch.load(args.ckpt_skeleton, map_location=device))
-        exit("skeleton_load")
+        # exit("skeleton_load")
 
     lr_grid = 1e-4
     if parallel:
@@ -584,7 +584,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     else:
         optimizer = torch.optim.Adam(grad_vars_pcaster, betas=(0.9,0.99))
 
-    if True:
+    if False:
         aabb = tensorf.ray_aabb
         gridsize = 50
 

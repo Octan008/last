@@ -16,7 +16,7 @@ ckpt = ./log/tensorf_anim_VM_traintest_shark/tensorf_anim_VM_traintest55.th
 
 #ckpt_ngp = ./torchngp/shark/checkpoints/ngp.pth.tar
 
-ckpt_skeleton = ./strage_log/default_upsample/default_upsample_skeleton_it59999.th
+#ckpt_skeleton = ./strage_log/default_upsample/default_upsample_skeleton_it59999.th
 
 #ckpt_pcaster = ./log/tensorf_anim_VM_pcasterPole/tensorf_anim_VM_traintest001_pCaster.th
 
@@ -48,6 +48,7 @@ model_name = TensorVMSplit
 
 
 shadingMode = SH
+ngp_render = 0
 
 fea2denseAct = softplus
 
