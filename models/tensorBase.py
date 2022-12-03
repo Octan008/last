@@ -650,11 +650,13 @@ class TensorBase(torch.nn.Module):
         #skeleton parsing -> transforms
         if not self.data_preparation:
             # transforms = self.skeleton.rotations_to_invs(gt_skeleton_pose)
+            # print("a", self.skeleton.get_listed_rotations())
             if skeleton_props is not None:
                 # print("frame_pose_set")
                 self.frame_pose = skeleton_props["frame_pose"]
             if (is_train or not is_render_only) and (not is_train or not self.use_gt_skeleton):
-                transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
+                # transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
+                transforms = self.skeleton.rotations_to_invs(self.frame_pose, type=self.posetype)
                 # print("using_opt_skeleton")
                 # exit("not implemented")
             else:
@@ -667,12 +669,14 @@ class TensorBase(torch.nn.Module):
                 transforms = self.skeleton.get_invs()
                 # print("using_gt_skeleton")
                 # transforms = self.skeleton.rotations_to_invs(self.frame_pose)
-
+            # print("b", self.skeleton.get_listed_rotations())
             draw_joints = self.render_jointmask
             if draw_joints:
-                # # self.skeleton.transformNet(self.frame_pose,type=self.posetype)     
-                self.skeleton.apply_transforms_top(self.frame_pose, use_precomp = False, type=self.posetype)
-                draw_mask = self.skeleton.draw_mask_all_cached(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
+                self.skeleton.transformNet(self.frame_pose,type=self.posetype)     
+                # self.skeleton.apply_transforms_top(self.frame_pose, use_precomp = False, type=self.posetype)
+                # draw_mask = self.skeleton.draw_mask_all_cached(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
+                draw_mask = self.skeleton.draw_mask_all(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
+            # print("c", self.skeleton.get_listed_rotations())
         shape = xyz_sampled.shape
 
         # Point Casting

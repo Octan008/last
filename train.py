@@ -24,7 +24,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 parallel = False
-dist_test = True
+dist_test = False
 rank_criteria = 0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -572,10 +572,10 @@ def skeleton_optim(rank, args, n_gpu = 1):
     else:
         lr_skel = 1e-4
     if SHCaster:
-        # optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-1}, {'params': grad_vars_skeletonpose, 'lr': 1e-1}], betas=(0.9,0.99))
+        optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}, {'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
         #姿勢のみ
-        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+        # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
         #SHFieldのみ
         # optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}], betas=(0.9,0.99))
@@ -632,16 +632,16 @@ def skeleton_optim(rank, args, n_gpu = 1):
     # print(allrays.shape, allrgbs.shape, num_frames)
     # exit()
     tensorf = tensorf.to(device)
-    
+    # print(skeleton.get_listed_rotations())
     for iteration in pbar:
         # # JOKE skeleton_optim
-        if iteration == 0 or (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-            skeleton_props ={"skeleton_dataset": skeleton_dataset}
-            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
-            prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props, device=device)
-            summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-            print("JOKE")
-        exit("JOKEEXIT")
+        # if iteration == 0 or (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
+        #     skeleton_props ={"skeleton_dataset": skeleton_dataset}
+        #     PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
+        #     prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props, device=device)
+        #     summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
+        #     print("JOKE")
+        # exit("JOKEEXIT")
         # # JOKE skeleton_optim
         
         # ray_idx = trainingSampler.nextids()

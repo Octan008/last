@@ -208,11 +208,14 @@ class shCaster(nn.Module):
         tmp = torch.cat([xyz_sampled.reshape(-1, 3),(xyz_sampled-viewdirs).reshape(-1, 3)], dim=0)
         self.joints = listify_skeleton(self.skeleton)
         if self.use_distweight:
+            # print(self.skeleton.get_listed_rotations())
+            # exit()
             weights = compute_weights(xyz_sampled.reshape(-1,3), self.joints).to(torch.float32)
             # print("distweightsman")
         else:
             # print("not distweightsman")
             weights = self.get_SH_vals(xyz_sampled.reshape(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
+            # exit("PP")
         if(weights.isnan().any()):
             ValueError("weights is nan")
         weights = torch.cat([weights, weights], dim=0)

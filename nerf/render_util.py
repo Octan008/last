@@ -75,9 +75,15 @@ def compute_weights(xyzs, joints):
     #xyzs, reshaped(-1,3)
     weights_list = []
     for j in joints:
+        # tmp_xyzs = torch.cat([xyzs, torch.ones(xyzs.shape[0], 1, device=xyzs.device)], dim=1)
+        # xyzs = torch.matmul(j.get_inv().unsqueeze(0), tmp_xyzs.permute(0,1).unsqueeze(0).unsqueeze(-1)).squeeze(-1).squeeze(0)[...,:3]
         weights = (xyzs - j.global_pos(ngp=True)).to(torch.float32).to(xyzs.device)
         weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
-        weights = torch.exp(-weights*0.5)
+        weights = torch.exp(-weights*1)
+        # if j.name in ['root', 'Sharkthroat',  'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
+        #     weights = weights*0.0
+        if j.tail:
+            weights = weights*0.0
         weights_list.append(weights)
         # print(j.name, j.global_pos(ngp=True), weights.shape)
         # print(torch.min(weights))
@@ -127,7 +133,7 @@ def weighted_transformation(xyzs, weights, transforms):
     tmp = torch.matmul(torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4), xyzs.unsqueeze(-1))
     result = tmp.squeeze()[...,:3]
 
-    result[non_valid] = xyzs[...,:3][non_valid]
+    result[non_valid] = result[non_valid] + xyzs[...,:3][non_valid]
     return result
 
 def fff_weighted_transformation(xyzs, weights, transforms):
@@ -174,6 +180,7 @@ def fff_weighted_transformation(xyzs, weights, transforms):
             break
         # result[valid] += torch.nan_to_num(torch.transpose(torch.matmul(transforms[i], xyzs[validT[0].unsqueeze(0).expand(4, -1)].reshape(4, -1)), 0, 1)[...,:3].reshape(n_sample*3)  * weights[:,i][valid[:,0]].unsqueeze(1))
         result += torch.nan_to_num(torch.transpose(torch.matmul(transforms[i], xyzs), 0, 1)[...,:3]  * weights[:,i].unsqueeze(1))[...,:3]
+    
 
     result[non_valid] = torch.transpose(xyzs, 0, 1)[...,:3][non_valid]
     return result
@@ -538,6 +545,15 @@ class Joint():
             return input
         else:
             return self.euler_to_matrix(input)
+
+    def get_inv(self, parent=None):
+        if parent is not None:
+            t = torch.matmul(parent, self.local_transform())
+        else:
+            t = torch.matmul(self.parent_transform, self.local_transform())
+
+        return affine_inverse(torch.matmul(t, self.bind_inv), self.device)
+
     def get_invs(self, parent=None):
         if parent is not None:
             t = torch.matmul(parent, self.local_transform())
@@ -557,6 +573,8 @@ class Joint():
 
     def rotations_to_invs(self, poses, parent=None, type="euler"):
         # etm_start = time.perf_counter()
+
+        
         if torch.is_tensor(poses[self.id]):
             pose = self.pose_converter(poses[self.id], type) # as radian
         else:
@@ -572,8 +590,12 @@ class Joint():
             t = torch.matmul(parent, self.local_transform())
         else:
             t = torch.matmul(self.parent_transform, self.local_transform())
+        self.precomp_forward_global_transforms = torch.matmul(t, self.bind_inv)
 
-        res = [affine_inverse(torch.matmul(t, self.bind_inv), self.device)]
+        res = [affine_inverse(self.precomp_forward_global_transforms, self.device)]
+        # if True or self.name in ['root', 'Sharkthroat', 'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
+        # if self.name in ['Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
+        #     res = [self.myeye(4)]
 
         # print("compute_inv : ", time.perf_counter() - comp_start)
 
@@ -618,6 +640,16 @@ class Joint():
     def inv_totalTransform(self, ngp=False):
         t = torch.matmul(self.global_transform(), self.bind_inv)
         return affine_inverse(t, self.device)
+
+    # def get_listed_invs(self, parent=None):
+    #     res = [self.inv_totalTransform()]
+    #     for c in self.children:
+    #         res.extend(c.get_listed_invs())
+    #     if parent is not None:
+    #         return res
+    #     else:
+    #         return torch.stack(res, dim=0)
+
 
 
     def add_child(self, c):
@@ -857,344 +889,3 @@ class Joint():
         return affine_inverse_batch(torch.bmm(self.precomp_forward_global_transforms, self.precomp_bindinvs))
         # return affine_inverse_batch(torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs), self.device)
 
-
-
-    # def make_child(self, p=None, name="noName"):
-    #     bind_pose = torch.eye( 4, dtype=torch.float32, device=torch.device(my_torch_device))
-    #     bind_pose[:3,3] = torch.tensor(p, dtype=torch.float32, device=torch.device(my_torch_device))
-    #     self.children.append(
-    #         Joint(
-    #             bind_pose=bind_pose,
-    #             parent_bind=self.global_transform(),
-    #             name=name
-    #         )
-    #     )
-
-
-
-
-
-
-
-    
-
-
-# class Joint():
-#     def __init__(self, p=None, parent_t=None, local_ts=None, bind_matrix=None, relative_transform=None, name=None) -> None:
-#         if bind_matrix is None:
-
-#             #Global Marker Positions
-#             p.append(1)
-#             self.p = torch.tensor(p,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.markers = [
-#                 self.p+torch.tensor([0.06, 0, 0,0],  dtype=torch.float32, device=torch.device(my_torch_device)),
-#                 self.p+torch.tensor([0, 0.06, 0,0],  dtype=torch.float32, device=torch.device(my_torch_device)),
-#                 self.p+torch.tensor([0, 0, 0.06,0],  dtype=torch.float32, device=torch.device(my_torch_device))
-#             ]
-
-#             self.T = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.T[:,3] = self.p
-
-#             self.R = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.S = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             #local transforms
-#             if local_ts is not None:
-                
-#                 self.T[:3,3] = self.p[:3] - local_ts["global_position"][:3]
-
-#                 self.R = local_ts["rotation"]
-
-#             #bind pose
-#             self.bind = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.bind[:,3] = self.p
-#             self.bind_inv = torch.linalg.pinv(self.bind.float()).to(torch.float32)
-
-#             #parent_transform
-#             self.parent_transform = parent_t.to(my_torch_device)
-#             self.child = []
-#             self.localTransform = self.local_transform()
-#         else:
-#             self.bind = torch.tensor(bind_matrix,  dtype=torch.float32, device=torch.device(my_torch_device))
-            
-#             #Global Marker Positions
-#             self.p = self.bind[:,3]
-#             self.markers = [
-#                 torch.mv(self.bind, torch.tensor([0.06, 0, 0,0],  dtype=torch.float32, device=torch.device(my_torch_device))),
-#                 torch.mv(self.bind, torch.tensor([0, 0.06, 0,0],  dtype=torch.float32, device=torch.device(my_torch_device))),
-#                 torch.mv(self.bind, torch.tensor([0, 0, 0, 0.06],  dtype=torch.float32, device=torch.device(my_torch_device)))
-#             ]
-#             relative_transform = torch.tensor(relative_transform , dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.T = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.T[:,3] = self.p    
-
-#             self.R = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.R[:3,:3] = torch.mm(relative_transform[:3,:3], self.bind[:3,:3])
-#             self.S = torch.eye(4,  dtype=torch.float32, device=torch.device(my_torch_device))
-
-#             #bind pose
-#             self.bind_inv = torch.linalg.pinv(self.bind.float()).to(torch.float32)
-
-#             #parent_transform
-#             self.parent_transform = torch.tensor(parent_t,  dtype=torch.float32, device=torch.device(my_torch_device))
-#             self.child = []
-#             self.localTransform = self.local_transform()
-#         if name is not None:
-#             self.name = name
-
-#     def get_listed_positions(self):
-#         res = [self.global_pos()]
-#         # print(self.name, res)
-#         for c in self.get_childs():
-#             res.extend(c.get_listed_positions())
-#         return torch.stack(res, dim=0)
-
-
-
-#     def inv_totalmatrix(self):
-#         return torch.linalg.pinv(torch.matmul(self.global_matrix(), self.bind_inv).float()).to(torch.float32)
-
-
-
-
-#     def local_transform(self):
-#         return torch.matmul(self.T, torch.matmul(self.R, self.S))
-#     def make_child(self, p):
-#         self.child.append(
-#             Joint(p, torch.matmul(self.parent_transform, self.localTransform), {
-#                 "global_position": self.p,
-#                 "rotation": torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
-#             })
-#         )
-#     def get_child(self, i):
-#         return self.child[i]
-#     def get_childs(self):
-#         return self.child
-#     def get_bind(self):
-#         return self.bind
-#     def get_bind_inv(self):
-#         return torch.linalg.pinv(self.bind.float()).to(torch.float32)
-    
-#     def decode_transform(self, transform):
-#         r = torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device))
-#         t = torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device))
-#         s = torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device))
-#         r[:3,:3] = copy.deepcopy(transform[:3,:3])
-#         t[:,3] = transform[:,3]
-#         return r,t,s
-
-
-
-#     def add_child(self, child):
-#         self.child.append(child)
-
-#     def apply_transform(self, rot=None, translate = None, scale = None, transform=None):
-#         if rot is not None:
-#             self.R = rot
-#         if translate is not None:
-#             self.T = translate
-#         if scale is not None:
-#             self.S = scale
-#         if transform is not None:
-#             self.R, dummy, self.S = self.decode_transform(torch.tensor(transform,  dtype=torch.float32, device=torch.device(my_torch_device)))
-
-        
-#         self.localTransform = copy.deepcopy(self.local_transform())
-#         self.apply_descender(self.parent_transform)
-
-#     def apply_descender(self, parent_t):
-#         self.parent_transform = parent_t
-#         for c in self.child:
-#             c.apply_descender(torch.matmul(self.parent_transform, self.localTransform))
-
-#     def draw_mask_all(self, rays_o, rays_d, radius):
-#         mask = self.draw_mask(rays_o, rays_d, radius)
-#         for i in range(3):
-#             p2 = self.markers[i]
-#             mask2 = self.draw_mask(rays_o, rays_d, 0.01, point = torch.matmul(self.global_matrix(), torch.matmul(self.bind_inv, p2))[:3])
-#             mask = torch.logical_or(mask, mask2)
-#         for c in self.child:
-#             mask2 = c.draw_mask_all(rays_o, rays_d, radius)
-#             mask = torch.logical_or(mask, mask2)
-#         return mask
-#     def local_pos(self):
-#         return self.p
-#     def global_pos(self, affine = False):
-        
-#         root = torch.zeros(4, dtype=torch.float32, device=torch.device(my_torch_device))
-#         root[3] = 1
-#         return torch.mv(self.global_matrix(), root).to(torch.float32)[:3]
-
-#     def global_matrix(self):
-#         return torch.matmul(self.parent_transform, self.localTransform)
-#     def global_matrix_inv(self):
-
-#         return torch.linalg.pinv(self.global_matrix().float()).to(torch.float32)
-    
-
-#     def draw_mask(self, rays_o, rays_d, radius, point = None):
- 
-#         if point is None:
-#             center = self.global_pos()
-#         else:
-#             center = point
-
-#         v2 = each_dot(rays_d, rays_d)
-#         xc = rays_o - center
-#         r2 = radius ** 2
-#         d = each_dot(rays_d, xc) ** 2 -(v2 * (each_dot(xc,xc) - r2))
-#         mask = d >= 0.0
-#         t = each_dot(-rays_d,xc) - torch.sqrt(d)
-
-#         mask2 = t >= 0.0
-#         return torch.logical_and(mask, mask2)
-
-# def sphere_mask(rays_o, rays_d, center, radius):
-#     center = torch.tensor(center,  dtype=torch.float32, device=torch.device(my_torch_device))
-#     v2 = each_dot(rays_d, rays_d)
-#     xc = rays_o - center
-#     r2 = radius ** 2
-#     d = each_dot(rays_d, xc) ** 2 -(v2 * (each_dot(xc,xc) - r2))
-#     mask = d >= 0.0
-#     t = each_dot(-rays_d,xc) - torch.sqrt(d)
-
-#     mask2 = t >= 0.0
-#     return torch.logical_and(mask, mask2)
-# #     -v(x-c)±√D
-# # t = ---------------
-# #          |v|2
-
-# #     D = {v(x-c)}2 - |v|2(|x-c|2-r2)
-
-
-        
-# def box_mask(rays_o, rays_d, center, width):
-#         i=0
-#         min_x = (center[i]+(width/2.0) - rays_o[...,i]) / rays_d[...,i]
-#         max_x = (center[i]-(width/2.0) - rays_o[...,i]) / rays_d[...,i]
-#         swap = min_x > max_x
-#         min_x[swap], max_x[swap] = max_x[swap], min_x[swap]
-#         i=1
-#         min_y = (center[i]+(width/2.0) - rays_o[...,i]) / rays_d[...,i]
-#         max_y = (center[i]-(width/2.0) - rays_o[...,i]) / rays_d[...,i]
-#         swap = min_y > max_y
-#         min_y[swap], max_y[swap] = max_y[swap], min_y[swap]
-#         min_swap=min_y > min_x
-#         min_x[min_swap],  min_y[min_swap] = min_y[min_swap], min_x[min_swap]
-#         max_swap = max_y < max_x
-#         max_x[max_swap] , max_y[max_swap] = max_y[max_swap], max_x[max_swap]
-#         i=2
-#         min_y = (center[i]+(width/2.0) - rays_o[...,i]) / rays_d[...,i]
-#         max_y = (center[i]-(width/2.0) - rays_o[...,i]) / rays_d[...,i]
-#         swap = min_y > max_y
-#         min_y[swap],  max_y[swap] =  max_y[swap], min_y[swap]
-#         min_swap=min_y > min_x
-#         min_x[min_swap], min_y[min_swap] = min_y[min_swap], min_x[min_swap]
-#         max_swap = max_y < max_x
-#         max_x[max_swap] ,max_y[max_swap] = max_y[max_swap], max_x[max_swap]
-
-#         intersect = max_x > min_x
-#         return intersect 
-
-
-
-
-
-# def make_joints_from_blender(file_path):
-#     def make_joint_rec(data, data_pos, j):
-#         name = data["name"]
-        
-#         bind_transform = torch.tensor(data["bind_transform"],  dtype=torch.float32, device=torch.device(my_torch_device))
-
-#         relative_transform = data["relative_transform"]
-#         parent_transform=j.global_matrix()
-
-#         # print(data["name"],"&", [[round(data["bind_transform"][j][i], 2) for i in range(4)] for j in range(4)], ";", end="")
-#         joint = Joint(
-#             data_pos[name]["head"],
-#             parent_transform,
-#             {
-#                 "global_position": j.p,
-#                 "rotation": torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
-#             },
-#             name=data["name"]
-#         )
-#         if len(data["childs"]) == 0:
-#             joint.add_child(
-#                 Joint(
-#                     data_pos[name]["tail"],
-#                     joint.global_matrix(),
-#                     {
-#                         "global_position": joint.p,
-#                         "rotation": torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
-#                     },
-#                     name=data["name"]+"_tail"
-#                 )
-#             )
-
-#         else:
-#             for c in data["childs"]:
-#                 joint.add_child(make_joint_rec(c,data_pos,joint))
-        
-#         return joint
-        
-#     f = open(file_path, 'r')
-#     data = json.load(f)
-#     root = data["initial_state"][0]
-#     data_pos = data["initial_bone"]
-#     print(root["name"])
-#     bind_transform = root["bind_transform"]
-#     relative_transform = root["relative_transform"]
-#     skeleton = Joint(
-#         parent_t = torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
-#         bind_matrix = bind_transform,
-#         relative_transform=relative_transform,
-#         name=root["name"]
-#         )
-#     for c in root["childs"]:
-#         skeleton.add_child(make_joint_rec(c, data_pos, skeleton))
-#     return skeleton
-
-    
-# def mask_origin_box(p):
-#     half_width = 0.05
-#     length = p[...,0] ** 2 + p[...,1] ** 2 + p[...,2] ** 2
-#     mask = length < (half_width ** 2)
-#     return mask
-
-# def mask_point(src, ref_point, half_width):
-#     p = src - torch.tensor(ref_point, dtype=torch.float32, device=torch.device(my_torch_device))
-#     length = p[...,0] ** 2 + p[...,1] ** 2 + p[...,2] ** 2
-#     mask = length < (half_width ** 2)
-#     return mask
-
-
-# def euler_to_matrix_old(angle = None, translate = None):
-#     mat = torch.eye(4, device=torch.device(my_torch_device))
-    
-#     if translate is not None:
-#         print(mat[:3, 3].shape, translate.shape)
-#         mat[:3, 3] = translate
-#     if angle is not None:
-#         for i, an in enumerate(angle):
-#             cos = math.cos(math.radians(an))
-#             sin = math.sin(math.radians(an))
-#             angle = torch.eye(4, device=torch.device(my_torch_device))
-#             # print(cos,sin, an, i, angle)
-#             if i== 0:
-#                 angle[1,1] = cos
-#                 angle[2,2] = cos
-#                 angle[2,1] = sin
-#                 angle[1,2] = -sin
-#             elif i == 1:
-#                 angle[0,0] = cos
-#                 angle[2,2] = cos
-#                 angle[0,2] = sin
-#                 angle[2,0] = -sin
-
-#             else:
-#                 angle[0,0] = cos
-#                 angle[1,1] = cos
-#                 angle[1,0] = sin
-#                 angle[0,1] = -sin
-#             mat = torch.matmul(angle, mat)
-#     return mat

@@ -62,6 +62,7 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
     idxs = list(range(n_vis_offset, test_dataset.all_rays.shape[0], img_eval_interval))
     tensorf.set_render_flags(jointmask = True)
     for idx, samples in tqdm(enumerate(test_dataset.all_rays[n_vis_offset::img_eval_interval].to(device)), file=sys.stdout):
+        # samples = test_dataset.all_rays[n_vis_offset].to(device)
         # print("idx", idx)
         # continue
         W, H = test_dataset.img_wh
@@ -73,23 +74,29 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
         # exit("crop_ray")
 
         if not args.data_preparation:
+            print("animframe", test_dataset.all_animFrames[idxs[idx]], idxs[idx])
+            # continue
+            #tmp
             if skeleton_dataset is not None and not args.use_gt_skeleton:
+                scale = idx / 15.0
                 skeleton_props = {"frame_pose": skeleton_dataset(test_dataset.all_animFrames[idxs[idx]])}
-                for j in tensorf.skeleton.get_children():
-                    apply_animation(test_dataset.frame_poses[idxs[idx]], j)
+                # for j in tensorf.skeleton.get_children():
+                #     apply_animation(test_dataset.frame_poses[idxs[idx]], j)
                 gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
-                # exit("こっち")
+                # # exit("こっち")
             else:
                 for j in tensorf.skeleton.get_children():
                     apply_animation(test_dataset.frame_poses[idxs[idx]], j)
                 gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
                 skeleton_props = {"frame_pose": gt_skeleton_pose}
                 # print(gt_skeleton_pose.shape)
-            rgb_map_gtpose, _, depth_map_gtpose, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
-                        ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props={"frame_pose": gt_skeleton_pose}, is_render_only=is_render_only)
-            rgb_map_gtpose = rgb_map_gtpose.clamp(0.0, 1.0)
-            rgb_map_gtpose = rgb_map_gtpose.reshape(H, W, 3).cpu()
-            rgb_map_gtpose = (rgb_map_gtpose.numpy() * 255).astype('uint8')
+            
+            # rgb_map_gtpose, _, depth_map_gtpose, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
+            #             ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props={"frame_pose": gt_skeleton_pose}, is_render_only=is_render_only)
+            # rgb_map_gtpose = rgb_map_gtpose.clamp(0.0, 1.0)
+            # rgb_map_gtpose = rgb_map_gtpose.reshape(H, W, 3).cpu()
+            # rgb_map_gtpose = (rgb_map_gtpose.numpy() * 255).astype('uint8')
+            #tmp
 
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
                                         ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props=skeleton_props, is_render_only=is_render_only)
@@ -118,11 +125,15 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
         
         #GT と inf を一緒に保存
         gt_rgb = (test_dataset.all_rgbs[idxs[idx]].view(H, W, 3).numpy() * 255).astype('uint8')
+        # gt_rgb = (test_dataset.all_rgbs[n_vis_offset].view(H, W, 3).numpy() * 255).astype('uint8')
         # rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
         rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
 
-        if not args.data_preparation:
-            rgb_map = np.concatenate((rgb_map, rgb_map_gtpose), axis=1)
+        #tmp
+        # if not args.data_preparation:
+        #     rgb_map = np.concatenate((rgb_map, rgb_map_gtpose), axis=1)
+        #tmp
+        # exit()
 
         rgb_maps.append(rgb_map)
         depth_maps.append(depth_map)
