@@ -94,7 +94,7 @@ def compute_weights(xyzs, joints):
     # exit("render_util, compute_weights")
     return torch.transpose(weights_list, 0, 1)
 
-def weighted_transformation(xyzs, weights, transforms):
+def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = True):
     #xyzs -> [N, 3]
     #weights -> [N, J]
     #transforms -> [J, 4, 4]
@@ -132,8 +132,12 @@ def weighted_transformation(xyzs, weights, transforms):
     # weights : [N, J]
     # xyzs : [N, 4]
     # print("fdfsa", torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).shape)
-    # weights += 1
-    tmp = torch.matmul(torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4), xyzs.unsqueeze(-1))
+    if if_transform_is_inv:
+        tmp = torch.matmul(torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4), xyzs.unsqueeze(-1))
+    else:
+        tmp = torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4)
+        tmp = affine_inverse_batch(tmp)
+        tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
     result = tmp.squeeze()[...,:3]
 
     # result = result * weights_sum.unsqueeze(-1) + xyzs[..., :3] * (1-weights_sum.unsqueeze(-1))
@@ -575,8 +579,13 @@ class Joint():
             return res
         else:
             return torch.stack(res, dim=0)
-
+    
     def rotations_to_invs(self, poses, parent=None, type="euler"):
+        return affine_inverse_batch(self.rotations_to_transforms(poses, parent=parent, type=type, inv=True))
+
+    
+
+    def rotations_to_transforms(self, poses, parent=None, type="euler"):
         # etm_start = time.perf_counter()
 
         
@@ -597,7 +606,7 @@ class Joint():
             t = torch.matmul(self.parent_transform, self.local_transform())
         self.precomp_forward_global_transforms = torch.matmul(t, self.bind_inv)
 
-        res = [affine_inverse(self.precomp_forward_global_transforms, self.device)]
+        res = [self.precomp_forward_global_transforms]
         # if True or self.name in ['root', 'Sharkthroat', 'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         # if self.name in ['Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         #     res = [self.myeye(4)]
@@ -605,7 +614,7 @@ class Joint():
         # print("compute_inv : ", time.perf_counter() - comp_start)
 
         for c in self.children:
-            res.extend(c.rotations_to_invs(poses, parent=t, type=type))
+            res.extend(c.rotations_to_transforms(poses, parent=t, type=type))
         if parent is not None:
             return res
         else:
@@ -866,9 +875,12 @@ class Joint():
         for i, j in enumerate(self.joints):
             j.apply_transform(poses[i], only_self=False)
 
-
-
     def rotations_to_invs_fast(self, poses, type="quaternion"):
+        return affine_inverse_batch(self.rotations_to_transforms_fast(poses, type=type))
+
+
+
+    def rotations_to_transforms_fast(self, poses, type="quaternion"):
         # print(poses.shape, type)
         # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)
 
@@ -891,6 +903,6 @@ class Joint():
         # 最終的には縦に掛けていけば各joint の transformが手に入る状態に
         # self.precomp_forward_global_transforms = torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs)
         self.precomp_forward_global_transforms = self.tree_mul(mat, self.precomp_depth)
-        return affine_inverse_batch(torch.bmm(self.precomp_forward_global_transforms, self.precomp_bindinvs))
+        return torch.bmm(self.precomp_forward_global_transforms, self.precomp_bindinvs)
         # return affine_inverse_batch(torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs), self.device)
 
