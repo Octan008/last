@@ -137,6 +137,7 @@ class TensorVM(TensorBase):
 class TensorVMSplit(TensorBase):
     def __init__(self, aabb, gridSize, device, **kargs):
         super(TensorVMSplit, self).__init__(aabb, gridSize, device, **kargs)
+        self.extra = False
 
 
     def init_svd_volume(self, res, device):
@@ -147,8 +148,8 @@ class TensorVMSplit(TensorBase):
         self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
         #
-
-        # self.extra_plane, self.extra_line = self.init_one_svd_extra(self.density_n_comp, self.gridSize, 0.1, device)
+        if self.extra: 
+            self.extra_plane, self.extra_line = self.init_one_svd_extra(self.density_n_comp, self.gridSize, 0.1, device)
 
 
     def init_one_svd(self, n_component, gridSize, scale, device):
@@ -163,17 +164,17 @@ class TensorVMSplit(TensorBase):
 
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
 
-    # def init_one_svd_extra(self, n_component, gridSize, scale, device):
-    #     plane_coef, line_coef = [], []
-    #     for i in range(len(self.vecMode)):
-    #         vec_id = self.vecMode[i]
-    #         mat_id_0, mat_id_1 = self.matMode[i]
-    #         plane_coef.append(torch.nn.Parameter(
-    #             scale * torch.ones((1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])).to(torch.float32)))  #
-    #         line_coef.append(
-    #             torch.nn.Parameter(scale * torch.ones((1, n_component[i], gridSize[vec_id], 1))))
+    def init_one_svd_extra(self, n_component, gridSize, scale, device):
+        plane_coef, line_coef = [], []
+        for i in range(len(self.vecMode)):
+            vec_id = self.vecMode[i]
+            mat_id_0, mat_id_1 = self.matMode[i]
+            plane_coef.append(torch.nn.Parameter(
+                scale * torch.ones((1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])).to(torch.float32)))  #
+            line_coef.append(
+                torch.nn.Parameter(scale * torch.ones((1, n_component[i], gridSize[vec_id], 1))))
 
-    #     return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
+        return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
     
     
 
