@@ -108,17 +108,20 @@ def weighted_transformation(xyzs, weights, transforms):
     eps = 1e-7
     non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
 
-    # valid = ~non_valid
+    valid = ~non_valid
+    valid_2 = weights_sum > eps
     # validT = torch.transpose(valid, 0, 1);
     # underOne = weights_sum < 1.0
 
     # original_weights = torch.where(~underOne, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-    weights_sum =  torch.where(weights_sum < eps, torch.ones_like(weights_sum), weights_sum)
+    # weights_sum =  torch.where(weights_sum < eps, torch.ones_like(weights_sum), weights_sum)
     # weights_sum =  torch.where(weights_sum < 1.0, torch.ones_like(weights_sum), weights_sum)
     # weights_sum =  torch.where(underOne, torch.ones_like(weights_sum), weights_sum)
 
     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
-    weights = weights/weights_sum.unsqueeze(1)
+    num_j = weights.shape[1]
+    print(valid.shape, weights.shape, weights_sum.shape)
+    weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
     # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
     
     
@@ -129,11 +132,13 @@ def weighted_transformation(xyzs, weights, transforms):
     # weights : [N, J]
     # xyzs : [N, 4]
     # print("fdfsa", torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).shape)
-    
+    # weights += 1
     tmp = torch.matmul(torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4), xyzs.unsqueeze(-1))
     result = tmp.squeeze()[...,:3]
 
-    result[non_valid] = result[non_valid] + xyzs[...,:3][non_valid]
+    # result = result * weights_sum.unsqueeze(-1) + xyzs[..., :3] * (1-weights_sum.unsqueeze(-1))
+
+    # result[non_valid] = result[non_valid] + xyzs[...,:3][non_valid]
     return result
 
 def fff_weighted_transformation(xyzs, weights, transforms):

@@ -568,14 +568,15 @@ def skeleton_optim(rank, args, n_gpu = 1):
     #<Training> Setup Optimizer
     # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
     if args.pose_type == "euler":
-        lr_skel = 1e-2
+        lr_skel = 1e+1
     else:
         lr_skel = 1e-4
     if SHCaster:
-        optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}, {'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+        # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+        #  optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e+1}, {'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
         #姿勢のみ
-        # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
         #SHFieldのみ
         # optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}], betas=(0.9,0.99))
