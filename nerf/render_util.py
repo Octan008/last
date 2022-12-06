@@ -17,13 +17,14 @@ import time
 my_torch_device = "cuda"
 
 def affine_inverse_batch(bmatrix, device="cuda"):
-    inv = torch.eye(4, device=device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+    # inv = torch.eye(4, device=device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+    inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
     inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
     inv[:,:3, 3] = torch.bmm(torch.transpose(bmatrix[:,:3,:3], 1, 2), -bmatrix[:,:3,3].unsqueeze(-1)).squeeze()
     return inv
 
 def affine_inverse(matrix, device="cuda"):
-    inv = torch.eye(4, device=device)
+    inv = torch.eye(4, device=matrix.device)
     inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
     inv[:3, 3] = torch.mv(torch.transpose(matrix[:3,:3], 0, 1), -matrix[:3,3])
     return inv
@@ -79,9 +80,13 @@ def compute_weights(xyzs, joints):
         # xyzs = torch.matmul(j.get_inv().unsqueeze(0), tmp_xyzs.permute(0,1).unsqueeze(0).unsqueeze(-1)).squeeze(-1).squeeze(0)[...,:3]
         weights = (xyzs - j.global_pos(ngp=True)).to(torch.float32).to(xyzs.device)
         weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
-        weights = torch.exp(-weights*1)
+        weights = torch.exp(-weights*10)
         # if j.name in ['root', 'Sharkthroat',  'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         #     weights = weights*0.0
+    
+        # if j.name in ['root', 'Sharkthroat',  'SharkHead', 'SharkHead_tail', 'SharkJaw']:
+        #     weights = weights*0.0
+            # 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail'
         if j.tail:
             weights = weights*0.0
         weights_list.append(weights)
@@ -120,7 +125,7 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = Tru
 
     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
     num_j = weights.shape[1]
-    print(valid.shape, weights.shape, weights_sum.shape)
+    # print(valid.shape, weights.shape, weights_sum.shape)
     weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
     # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
     
@@ -133,16 +138,23 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = Tru
     # xyzs : [N, 4]
     # print("fdfsa", torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).shape)
     if if_transform_is_inv:
-        tmp = torch.matmul(torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4), xyzs.unsqueeze(-1))
+        tmp = torch.matmul(torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4), xyzs.unsqueeze(-1))
     else:
-        tmp = torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4)
+        # print("not implemented")
+        # exit("not inv")
+        # t2 = affine_inverse_batch(transforms)
+        # tmp2 = torch.matmul(weights, t2.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4)
+        tmp = torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4)
         tmp = affine_inverse_batch(tmp)
+        # print("tmp-tmp2", torch.sum(tmp-tmp2))
+        # print("trans-t2", torch.sum(transforms-t2))
+        # exit("インバース問題は正しかったのか？")
         tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
     result = tmp.squeeze()[...,:3]
 
     # result = result * weights_sum.unsqueeze(-1) + xyzs[..., :3] * (1-weights_sum.unsqueeze(-1))
 
-    # result[non_valid] = result[non_valid] + xyzs[...,:3][non_valid]
+    # result[non_valid] = xyzs[...,:3][non_valid]
     return result
 
 def fff_weighted_transformation(xyzs, weights, transforms):
@@ -326,7 +338,7 @@ def make_joints_from_blender(file_path, device="cuda"):
     bind = bind.to(torch.float32)
     skeleton = Joint(
             bind_pose = bind,
-            parent_bind=torch.eye(4, dtype=torch.float32, device=torch.device(my_torch_device)),
+            parent_bind=torch.eye(4, dtype=torch.float32, device=torch.device(device)),
             name = root["name"],
             device=device
         )
@@ -341,7 +353,7 @@ def cast_positions(positions, joints, weights_list = None):
     if weights_list is None:
         weights_list = []
         for j in joints:
-            weights = (positions - j.global_pos(ngp=True)).to(torch.float32).to(my_torch_device)
+            weights = (positions - j.global_pos(ngp=True)).to(torch.float32).to(positions.device)
             weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
             weights = torch.exp(-weights*10)
             weights_list.append(weights)
@@ -352,8 +364,8 @@ def cast_positions(positions, joints, weights_list = None):
         weights_sum = weights_list.sum(dim=0)
         weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
  
-    ones = torch.ones(positions.shape[0], device=my_torch_device,  dtype=torch.float32).unsqueeze(1)
-    casted = torch.zeros(positions.shape[0],4, device=my_torch_device,  dtype=torch.float32).unsqueeze(2)
+    ones = torch.ones(positions.shape[0], device=positions.device,  dtype=torch.float32).unsqueeze(1)
+    casted = torch.zeros(positions.shape[0],4, device=positions.device,  dtype=torch.float32).unsqueeze(2)
     weights_list = weights_list/weights_sum
     positions = torch.cat([positions, ones], dim=1)
     
@@ -369,7 +381,7 @@ def cast_positions(positions, joints, weights_list = None):
 
 
 def euler_to_matrix(angle = None, translate = None):
-    mat = torch.eye(4, device=torch.device(my_torch_device))
+    mat = torch.eye(4, device=torch.device(angle.device))
     
     if translate is not None:
         mat[:3, 3] = translate
@@ -581,7 +593,7 @@ class Joint():
             return torch.stack(res, dim=0)
     
     def rotations_to_invs(self, poses, parent=None, type="euler"):
-        return affine_inverse_batch(self.rotations_to_transforms(poses, parent=parent, type=type, inv=True))
+        return affine_inverse_batch(self.rotations_to_transforms(poses, parent=parent, type=type))
 
     
 
@@ -592,7 +604,7 @@ class Joint():
         if torch.is_tensor(poses[self.id]):
             pose = self.pose_converter(poses[self.id], type) # as radian
         else:
-            pose = self.pose_converter(torch.tensor(poses[self.id], dtype=torch.float32, device=torch.device(my_torch_device)), type)
+            pose = self.pose_converter(torch.tensor(poses[self.id], dtype=torch.float32, device=torch.device(poses.device)), type)
         # print("etm: ", time.perf_counter() - etm_start)
         # apt_start = time.perf_counter()
         self.apply_transform(pose, only_self=True)
@@ -604,9 +616,9 @@ class Joint():
             t = torch.matmul(parent, self.local_transform())
         else:
             t = torch.matmul(self.parent_transform, self.local_transform())
-        self.precomp_forward_global_transforms = torch.matmul(t, self.bind_inv)
+        self.precomp_forward_global_transform = torch.matmul(t, self.bind_inv)
 
-        res = [self.precomp_forward_global_transforms]
+        res = [self.precomp_forward_global_transform]
         # if True or self.name in ['root', 'Sharkthroat', 'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         # if self.name in ['Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         #     res = [self.myeye(4)]
@@ -642,29 +654,9 @@ class Joint():
         del seed
         return result
 
-    # def inv_list(self, parent=None):
-    #     if parent is None:
-    #         parent = self.parent_transform
-    #     t = torch.mm(parent, self.local_transform_cached)
-    #     res = [affine_inverse(torch.mm(t, self.bind_inv))]
-    #     for c in self.children:
-    #         res.extend(c.inv_list(t))
-    #     return res
-
     def inv_totalTransform(self, ngp=False):
         t = torch.matmul(self.global_transform(), self.bind_inv)
         return affine_inverse(t, self.device)
-
-    # def get_listed_invs(self, parent=None):
-    #     res = [self.inv_totalTransform()]
-    #     for c in self.children:
-    #         res.extend(c.get_listed_invs())
-    #     if parent is not None:
-    #         return res
-    #     else:
-    #         return torch.stack(res, dim=0)
-
-
 
     def add_child(self, c):
         self.children.append(c)
@@ -898,11 +890,18 @@ class Joint():
                 # tail の場合、animationを当てない
             mats2 = torch.where(self.precomp_masks[i], animations[self.precomp_ids[i]].expand_as(mats2), mats2)
             # joint ごとに、transform が入るべき場所が precomp_mask
-        mat = torch.bmm(self.precomp_mats.reshape(self.precomp_num_joints*self.precomp_depth, 4, 4), mats2.reshape(self.precomp_num_joints*self.precomp_depth, 4, 4)).reshape(self.precomp_num_joints, self.precomp_depth, 4, 4)
+        mat = torch.bmm(self.precomp_mats.view(self.precomp_num_joints*self.precomp_depth, 4, 4), mats2.view(self.precomp_num_joints*self.precomp_depth, 4, 4)).view(self.precomp_num_joints, self.precomp_depth, 4, 4)
         # 計算id行列上の同じ位置のもの同士、initial_transform と 回転行列をかけて一定化
         # 最終的には縦に掛けていけば各joint の transformが手に入る状態に
         # self.precomp_forward_global_transforms = torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs)
         self.precomp_forward_global_transforms = self.tree_mul(mat, self.precomp_depth)
+        self.precomp_poses = animations
+        
         return torch.bmm(self.precomp_forward_global_transforms, self.precomp_bindinvs)
         # return affine_inverse_batch(torch.bmm(self.tree_mul(mat, self.precomp_depth), self.precomp_bindinvs), self.device)
+
+    def apply_precomputed_localtransorms(self):
+        for i, j in enumerate(self.joints):
+            j.apply_transform(self.precomp_poses[i], only_self=False)
+            # exit("ff")
 

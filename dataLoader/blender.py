@@ -7,8 +7,10 @@ from PIL import Image
 from torchvision import transforms as T
 from torchngp.nerf.provider import nerf_matrix_to_ngp
 
-
+import sys
 from .ray_utils import *
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from nerf.render_util import *
 
 
 class BlenderDataset(Dataset):
@@ -42,6 +44,16 @@ class BlenderDataset(Dataset):
     def read_depth(self, filename):
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)  # (800, 800)
         return depth
+    def compute_skeleton_poses(self, skeleton):
+        self.frame_skeleton_pose = []
+        for i, pose in enumerate(self.frame_poses):
+            for j in skeleton.get_children():
+                apply_animation(pose, j)
+            self.frame_skeleton_pose.append(skeleton.get_listed_rotations().clone())
+        
+
+
+        
     
     def read_meta(self):
 

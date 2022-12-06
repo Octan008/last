@@ -6,4 +6,4 @@
 # python train.py --config configs/shark.txt --render_only 1 --render_test 0
 # python train.py --config configs/shark.txt # --render_only 1 --render_test 1
 # python train.py --config configs/dist.txt # --render_only 1 --render_test 1
-python train.py --config configs/debug_dist_weights_error.txt # --render_only 1 --render_test 1
+python train.py --config configs/debug_12last_transparent.txt # --render_only 1 --render_test 1

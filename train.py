@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 import datetime
 
 from dataLoader import dataset_dict
-import sys
+import traceback,sys
 
 from nerf.render_util import *
 from nerf.skeleton_poses import *
@@ -24,7 +24,8 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 parallel = False
-dist_test = False
+# dist_test = True
+indivInv = False
 rank_criteria = 0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -398,19 +399,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
         tensorf = eval(args.model_name)(**kwargs)
         tensorf.load(ckpt)
         tensorf.modify_aabb(torch.tensor([2.5, 2.5, 1]).to(device))
-        # tensorf.modify_aabb(torch.tensor([0.5, 0.5, 0.5]).to(device))
-        # print(tensorf.ray_aabb)
-        # tmp = tensorf.ray_aabb
-        # tmp[0,1] = -20
-        # tmp[1,1] = 20
-        # tmp[0,0] = -20
-        # tmp[1,0] = 20
-        # tmp[0,2] = -20
-        # tmp[1,2] = 20
-
-        # tensorf.temp_modify_all_aabb(tmp)
-        # print(tensorf.ray_aabb)
-        # exit("ray_aabb")
         
     else:
         tensorf = eval(args.model_name)(aabb, reso_cur, device,
@@ -419,6 +407,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
     # grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
     # print(grad_vars)
+    # args.add_argument("--use_indivInv", type=int, default=0)
+    args.use_indivInv = False
+    tensorf.set_args(args)
 
 
 
@@ -468,6 +459,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
     skeleton.set_inv_precomputations(len(joints))
     skeleton.set_as_root()
     skeleton.set_tails(skeleton.get_tail_ids())
+    train_dataset.compute_skeleton_poses(skeleton)
+    test_dataset.compute_skeleton_poses(skeleton)
 
     num_frames = len(train_dataset.frame_poses)
 
@@ -503,13 +496,13 @@ def skeleton_optim(rank, args, n_gpu = 1):
     # tensorf.set_SH_feats(sh_field())
 
 
-    SHCaster = args.shcaster
-    if SHCaster:
+    args.caster
+    if args.caster == "sh":
         pCaster_origin  = shCaster()
         pCaster_origin.set_SH_feats(sh_field())
-        pCaster_origin.set_skeleton(skeleton)
+        
         grad_vars_sh_field = sh_field.parameters()
-    else:
+    elif args.caster == "bwf":
         # print(reso_cur)
         reso_cur_2 = reso_cur
         reso_cur_2[0] = reso_cur_2[0]//4
@@ -517,14 +510,25 @@ def skeleton_optim(rank, args, n_gpu = 1):
         reso_cur_2[2] = reso_cur_2[2]//4
         # exit()
         pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
-        pCaster_origin.set_skeleton(skeleton)
+        # pCaster_origin.set_skeleton(skeleton)
         if args.ckpt_pcaster is not None:
             ckpt = torch.load(args.ckpt_pcaster, map_location=device)
             pCaster_origin.load_state_dict(ckpt["state_dict"])
-            # exit("laod_state_dict")
+    elif args.caster == "dist":
+        pCaster_origin  = DistCaster()
+
+    else:
+        try:
+            x = 1 / 0
+        except:
+            traceback.print_exc()
+            exit("caster not found")
+
+        
+
+
+    pCaster_origin.set_skeleton(skeleton)
     
-    pCaster_origin.set_usedistweight(dist_test)
-    # pCaster_origin.set_allgrads(not dist_test)
 
     
     tensorf.set_skeletonmode()
@@ -539,11 +543,16 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # exit("skeleton_load")
 
     lr_grid = 1e-4
+    if args.pose_type == "euler":
+        lr_skel = 1e-2
+    else:
+        lr_skel = 1e-4
+    
     if parallel:
         # tensorf = tensorf.to("cuda:0")
         # tensorf_ddp =  DDP(tensorf, device_ids=[rank])
         pCaster = DDP(pCaster_origin, device_ids=[rank])
-        if not SHCaster:
+        if args.caster == "bwf":
             grad_vars_pcaster = pCaster_origin.get_optparam_groups(lr_init_spatialxyz = lr_grid )
         tensorf.set_pointCaster(pCaster, pCaster_origin)
 
@@ -552,7 +561,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     else:
         tensorf_ddp = tensorf
         pCaster = pCaster_origin
-        if not SHCaster:
+        if args.caster == "bwf":
             grad_vars_pcaster = pCaster.get_optparam_groups(lr_init_spatialxyz = lr_grid )
         tensorf.set_pointCaster(pCaster)
 
@@ -567,23 +576,31 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
     #<Training> Setup Optimizer
     # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
-    if args.pose_type == "euler":
-        lr_skel = 1e+1
-    else:
-        lr_skel = 1e-4
-    if SHCaster:
+
+    if args.caster == "sh":
         # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
         #  optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e+1}, {'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
         #姿勢のみ
-        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+        # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
         #SHFieldのみ
-        # optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}], betas=(0.9,0.99))
+        optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}], betas=(0.9,0.99))
         # print(grad_vars_skeletonpose.params)
         # exit("shcaster")
+    elif args.caster == "bwf":
+        params = grad_vars_pcaster
+        # params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
+        optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
+
+    elif args.caster == "dist":
+        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
     else:
-        optimizer = torch.optim.Adam(grad_vars_pcaster, betas=(0.9,0.99))
+        try:
+            x = 1 / 0
+        except:
+            traceback.print_exc()
+            exit("caster not found")
 
     if False:
         aabb = tensorf.ray_aabb
@@ -633,6 +650,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
     # print(allrays.shape, allrgbs.shape, num_frames)
     # exit()
     tensorf = tensorf.to(device)
+    
+    # tensorf.use_indivInv = indivInv
     # print(skeleton.get_listed_rotations())
     for iteration in pbar:
         # # JOKE skeleton_optim
@@ -656,7 +675,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         rgb_train = torch.index_select(allrgbs[itr+num_frames*rank_diff].to(device), 0, idx)
         
         if args.use_gt_skeleton:
-            skel = test_dataset.frame_poses[itr+num_frames*rank_diff]
+            # skel = test_dataset.frame_poses[itr+num_frames*rank_diff]
+            skel = test_dataset.frame_skeleton_pose[itr+num_frames*rank_diff]
             # exit("why_")
         else:
             skel = skeleton_dataset(allanimframes[itr+num_frames*rank_diff])
@@ -683,21 +703,23 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # #あとで消す
 
 
-        if not SHCaster:
+        if not args.caster == "sh":
+            # pass
             tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)
 
         
-            sigma = tensorf.get_density(box.reshape(-1,3))
-            weights = pCaster_origin.sample_BWfield(
-                pCaster_origin.normalize_coord(box.reshape(-1,3).unsqueeze(0).repeat(20,1,1))
-            )
+            # sigma = tensorf.get_density(box.reshape(-1,3))
+            # weights = pCaster_origin.sample_BWfield(
+            #     pCaster_origin.normalize_coord(box.reshape(-1,3).unsqueeze(0).repeat(20,1,1))
+            # )
 
-            # print(sigma.shape, weights.shape)
-            # exit()
-            loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
-            loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
+            # # print(sigma.shape, weights.shape)
+            # # exit()
+            # loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
+            # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
 
-            loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
+            # loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
+            loss += tvloss * 1.0
 
 
         # loss
@@ -775,7 +797,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # if rank == 0:
                     skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
                     sh_field.save(f'{logfolder}/{args.expname}_sh.th')
-                    if not SHCaster:
+                    if not args.caster == "sh":
                         pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
                     tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
 

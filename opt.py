@@ -101,6 +101,7 @@ def config_parser(cmd=None):
     parser.add_argument("--sh_feats", type=str, default=None,
                     help='specific weights npy file to reload for coarse network')
 
+
     #Flags
     parser.add_argument("--render_only", type=int, default=0)
     parser.add_argument("--bwf", type=int, default=0)
@@ -108,7 +109,9 @@ def config_parser(cmd=None):
     parser.add_argument("--render_train", type=int, default=0)
     parser.add_argument("--render_path", type=int, default=0)
     parser.add_argument("--export_mesh", type=int, default=0)
-    parser.add_argument("--shcaster", type=int, default=1)
+    parser.add_argument("--caster", type=str, default=None,
+                help='specific weights npy file to reload for coarse network')
+
     parser.add_argument("--use_gt_skeleton", type=int, default=0)
     parser.add_argument("--data_preparation", type=int, default=0)
 

@@ -85,9 +85,10 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
                 gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
                 # # exit("こっち")
             else:
-                for j in tensorf.skeleton.get_children():
-                    apply_animation(test_dataset.frame_poses[idxs[idx]], j)
-                gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
+                # for j in tensorf.skeleton.get_children():
+                #     apply_animation(test_dataset.frame_poses[idxs[idx]], j)
+                # gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
+                gt_skeleton_pose = test_dataset.frame_skeleton_pose[idxs[idx]]
                 skeleton_props = {"frame_pose": gt_skeleton_pose}
                 # print(gt_skeleton_pose.shape)
             
