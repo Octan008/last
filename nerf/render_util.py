@@ -16,6 +16,9 @@ import time
 
 my_torch_device = "cuda"
 
+def clip_weight(val, thresh = 1e-4, min=0, max=1):
+    return 1-torch.clamp((1-val*(1.0/thresh)), min=min, max=max)
+
 def affine_inverse_batch(bmatrix, device="cuda"):
     # inv = torch.eye(4, device=device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
     inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
@@ -126,7 +129,12 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = Tru
     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
     num_j = weights.shape[1]
     # print(valid.shape, weights.shape, weights_sum.shape)
-    weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
+    softmax = True
+    if softmax:
+        m = nn.Softmax(dim=1)
+        weights = m(weights)
+    else:
+        weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
     # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
     
     

@@ -703,9 +703,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # #あとで消す
 
 
-        if not args.caster == "sh":
+        if args.caster == "bwf":
             # pass
             tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)
+            # print(loss, tvloss)
+            # exit("tvloss")
 
         
             # sigma = tensorf.get_density(box.reshape(-1,3))
@@ -719,7 +721,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
             # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
 
             # loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
-            loss += tvloss * 1.0
+            loss += tvloss * 10.0
 
 
         # loss

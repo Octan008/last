@@ -612,15 +612,6 @@ class TensorBase(torch.nn.Module):
 
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1, skeleton_props=None, is_render_only=False):
-        # <<<<<<< HEAD
-        #         self.stepSize = self.stepSize.to(rays_chunk.device)
-        #         self.aabb = self.aabb.to(rays_chunk.device)
-        #         self.invaabbSize = self.invaabbSize.to(rays_chunk.device)
-        #         self.device = rays_chunk.device
-        # =======
-        # >>>>>>> merging
-        # <sample points> -> xyz, viewdirs
-        
         if True:
             # N_samples *= 10
             viewdirs = rays_chunk[:, 3:6]
@@ -752,26 +743,9 @@ class TensorBase(torch.nn.Module):
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid)
                 # self.clamp_pts(self, xyz_sampled)
                 self.caster_weights = self.caster_origin.get_weights()
-                # print(self.caster_weights.shape)
-                # tmp_weight = torch.cat([self.caster_weights, self.caster_weights], dim=0)
-                # print(tmp_weight.shape)
-                # tmp_weight = tmp_weight[:tmp_weight.shape[0]//2]
-                # print(tmp_weight.shape)
-                # print(torch.sum(tmp_weight - self.caster_weights))
-                # exit()
-                # self.caster_weights = self.caster_weights[:self.caster_weights.shape[0]//2]
-                # print("caster_weights", self.caster_weights.shape)
-                # print("max", torch.max(self.caster_weights))
-                # print("min", torch.min(self.caster_weights))
-                # print("sum", torch.sum(self.caster_weights, dim=1).shape)
                 weights_sum = torch.sum(self.caster_weights, dim=1)
-                # print("relu", torch.sum(self.caster_weights, dim=1))
-                # print("max", torch.max(weights_sum))
-                # print("min", torch.min(weights_sum))
-                rate = 1
-                rate2 = 1000
-                bg_alpha = 1-torch.clamp((1-weights_sum*rate2)*rate, min=0, max=1).view(shape[0], -1)
-                
+                bg_alpha = clip_weight(weights_sum, thresh = 1e-4).view(shape[0], -1).view(shape[0], -1)
+
             save_npz = False;
             if save_npz:
                 save_npz = {}
