@@ -8,6 +8,10 @@ from nerf.render_util import *
 from models.sh_field import SphereHarmonicJoints
 import glob
 
+from torchngp.encoding import get_encoder
+from torchngp.ffmlp import FFMLP
+
+# from torchngp.nerf.renderer import NeRFRenderer
 
 # def tv_loss_func_grid(image, weight = 0.01):
 #     tv_h = ((image[:,1:,:,:] - image[:,:-1,:,:]).pow(2)).sum()
@@ -45,6 +49,7 @@ class CasterBase(nn.Module):
         kwargs = self.get_kwargs()
         ckpt = {'kwargs': kwargs, 'state_dict': self.state_dict()}
         torch.save(ckpt, path)
+
     def set_skeleton(self, skeleton):
         self.skeleton = skeleton
         self.joints = listify_skeleton(self.skeleton)
@@ -68,6 +73,8 @@ class CasterBase(nn.Module):
         return {
             'skeleton': self.skeleton,
         }
+    def normalize_coord(self, xyz_sampled):
+        return (xyz_sampled-self.ray_aabb[0]) * self.invrayaabbSize - 1
 
 
 
@@ -97,7 +104,92 @@ class DistCaster(CasterBase):
 
         return xyz_sampled, viewdirs    
 
+@torch.cuda.amp.autocast(enabled=True)
+class MLPCaster(CasterBase):
+    def __init__(self, dim, device):
+        super().__init__()
+        encoding="hashgrid"
+        encoding_dir="sphere_harmonics"
+        num_layers=2
+        hidden_dim=64
+        geo_feat_dim=15
+        num_layers_color=3
+        hidden_dim_color=64
+        bound=1.0 / 16.0
 
+        # sigma network
+        self.num_layers = num_layers
+        self.hidden_dim = hidden_dim
+        self.geo_feat_dim = geo_feat_dim = 0
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.bound = bound
+
+        self.weight_nets = []
+        for i in range(dim):
+
+            self.weight_nets.append(
+                FFMLP(
+                    input_dim=self.in_dim, 
+                    # input_dim=3, 
+                    output_dim=1 + self.geo_feat_dim,
+                    hidden_dim=self.hidden_dim,
+                    num_layers=self.num_layers,
+                ).to(device)
+            )
+
+    @torch.cuda.amp.autocast(enabled=True)
+    def density(self, x):
+        # x: [J, N, 3], in [-bound, bound]
+        res = []
+        for i in range(len(self.weight_nets)):
+            tmp = self.encoder(x[i], bound=self.bound)
+            h = self.weight_nets[i](tmp)
+            # h = self.weight_nets[i](x[i])
+
+
+            sigma = F.relu(h[..., 0])
+            # geo_feat = h[..., 1:]
+
+            res.append(sigma)
+            #  {
+            #     'sigma': sigma,
+            #     'geo_feat': geo_feat,
+            # }
+        return torch.stack(res, dim=0)
+
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+        shape = xyz_sampled.shape
+        xyz_slice = xyz_sampled.view(-1, 3).shape[0]
+        # # 1115
+        weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
+        self.weights = weights
+        weights = torch.cat([weights, weights], dim=0)
+        tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
+        tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+        if(tmp.isnan().any() or tmp.isinf().any()):
+            ValueError("tmp is nan")
+        #debug
+        xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
+        xyz_sampled = xyz_sampled.view(shape)
+        viewdirs = viewdirs.view(shape)
+
+        return xyz_sampled, viewdirs
+
+    def compute_weights(self, xyz, transforms,  features=None, locs=None):
+        # return compute_weisghts(xyz, self.joints).to(torch.float32)
+
+       
+        xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
+        if self.args.use_indivInv:
+            invs = transforms
+        else:
+            invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
+        result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
+        result = self.normalize_coord(result[:,:,:3])
+        # print(result.shape)
+        # exit("result")
+        bwf = self.density(result) # [j,sample]
+        return bwf.permute(1,0)
 
 class BWCaster(CasterBase):
     def __init__(self, dim, gridSize, device):
@@ -164,8 +256,14 @@ class BWCaster(CasterBase):
         for idx in range(len(self.app_line)):
             for i in range(self.app_line[idx].shape[0]):
                 total = total + reg(self.app_line[idx][i].unsqueeze(0)) * 1e-4 + reg(self.app_plane[idx][i].unsqueeze(0)) * 1e-3
-                if linear:
-                    total = total + (tv_loss_func_line(self.app_line[idx][i]) * 1e-4 + tv_loss_func_plane(self.app_plane[idx][i]) * 1e-3) * 1e-4
+                # if linear:
+                #     total = total + (tv_loss_func_line(self.app_line[idx][i]) * 1e-4 + tv_loss_func_plane(self.app_plane[idx][i]) * 1e-3) * 1e-4
+        return total
+    def linear_loss(self):
+        total = 0
+        for idx in range(len(self.app_line)):
+            for i in range(self.app_line[idx].shape[0]):
+                total = total + (tv_loss_func_line(self.app_line[idx][i]) * 1e-4 + tv_loss_func_plane(self.app_plane[idx][i]) * 1e-3) * 1e-4
         return total
 
 
@@ -270,13 +368,19 @@ class shCaster(CasterBase):
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
         tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
+
+        if torch.isnan(self.sh_feats).any() or torch.isinf(self.sh_feats).any():
+            raise ValueError("shfeats"+"nan or inf in weights")
         
         if self.use_distweight:
             exit()
         else:
             weights = self.get_SH_vals(xyz_sampled.view(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
-        if(weights.isnan().any()):
-            ValueError("weights is nan")
+
+        if torch.isnan(weights).any() or torch.isinf(weights).any():
+            raise ValueError("justaftergetweights"+"nan or inf in weights")
+        
+    
         self.weights = weights
         weights = torch.cat([weights, weights], dim=0)
         tmp =  weighted_transformation(tmp, weights, transforms, if_transform_is_inv=self.args.use_indivInv)
@@ -303,24 +407,45 @@ class shCaster(CasterBase):
 
     def get_SH_vals(self, xyz, features, invs, locs):
         xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
-
+        if torch.isnan(xyz).any() or torch.isinf(xyz).any():
+            raise ValueError("nan or inf")
+        if torch.isnan(locs).any() or torch.isinf(locs).any():
+            raise ValueError("nan or inf")
+        if torch.isnan(invs).any() or torch.isinf(invs).any():
+            raise ValueError("nan or inf")
         xyz = []
         for j in range(locs.shape[0]):
             xyz.append(torch.bmm(invs[j].unsqueeze(0).repeat(xyz_new.shape[0], 1, 1), xyz_new.unsqueeze(-1)).squeeze())#[samples, 4]
         xyz = torch.stack(xyz, dim=0)[:,:,:3]#[j,samples,3]
         viewdirs = locs.unsqueeze(-2).repeat(1,xyz.shape[1], 1) - xyz #(j, sample, 3)
-        lengths = torch.norm(viewdirs, dim=-1)
-        viewdirs = viewdirs / lengths.unsqueeze(-1)
+        # lengths = torch.norm(viewdirs, dim=-1)
+        lengths = torch.nan_to_num(torch.linalg.norm(viewdirs, dim=-1))
+        if torch.isnan(lengths).any() or torch.isinf(lengths).any():
+            raise ValueError("nan or inf")
+        # viewdirs = viewdirs / lengths.unsqueeze(-1)
+        if torch.isnan(viewdirs).any() or torch.isinf(viewdirs).any():
+            raise ValueError("nan or inf")
+        viewdirs = torch.nn.functional.normalize(viewdirs, dim=-1)
+        if torch.isnan(viewdirs).any() or torch.isinf(viewdirs).any():
+            raise ValueError("nan or inf")
         sh_mult = eval_sh_bases(2, viewdirs)#(j,sample, 1)#[:, :,None].view(viewdirs.shape[0]*viewdirs.shape[1], 1, -1)#(sample*j, 1, 9)
         rad_sh = self.sh_feats.view(locs.shape[0], 1, sh_mult.shape[-1])#(j, 1, 9)
+        if torch.isnan(rad_sh).any() or torch.isinf(rad_sh).any():
+            raise ValueError("nan or inf")
         rads = torch.relu(torch.sum(sh_mult * rad_sh.repeat(1, xyz.shape[1], 1), dim=-1) + 0.5)#(j,sample,  1)
+        if torch.isnan(rads).any() or torch.isinf(rads).any():
+            raise ValueError("nan or inf")
         #42
         eps = 1e-6
         non_valid = rads < eps
         relative_distance = torch.relu(1.0 - lengths/rads)#(j, sample)
+        if torch.isnan(relative_distance).any() or torch.isinf(relative_distance).any():
+            raise ValueError("nan or inf")
         relative_distance[non_valid] = 0.0
+        if torch.isnan(relative_distance).any() or torch.isinf(relative_distance).any():
+            raise ValueError("nan or inf")
         relative_distance = torch.transpose(relative_distance, 0 , 1)#(j, sample) -> (sample, j)
         if torch.isnan(relative_distance).any() or torch.isinf(relative_distance).any():
-            ValueError("nan or inf")
+            raise ValueError("nan or inf")
 
         return relative_distance#weights, (sample, j)(j, sample)では？

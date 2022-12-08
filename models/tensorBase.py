@@ -655,10 +655,18 @@ class TensorBase(torch.nn.Module):
             # if (is_train or not is_render_only) and (not is_train):
             if True:
                 # transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
+                if torch.isnan(self.frame_pose).any() or torch.isinf(self.frame_pose).any():
+                    print(self.frame_pose)
+                    print(self.skeleton.get_listed_names())
+                    raise ValueError("justaftergetweights"+"nan or inf in weights")
+        
                 if self.args.use_indivInv:
                     transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
                 else:
                     transforms = self.skeleton.rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
+
+                if torch.isnan(transforms ).any() or torch.isinf(transforms ).any():
+                    raise ValueError("justaftergetweights"+"nan or inf in weights")
                     # print("not using indivInv")
                 # # print("using_opt_skeleton")
                 # # exit("not implemented")
@@ -744,7 +752,7 @@ class TensorBase(torch.nn.Module):
                 # self.clamp_pts(self, xyz_sampled)
                 self.caster_weights = self.caster_origin.get_weights()
                 weights_sum = torch.sum(self.caster_weights, dim=1)
-                bg_alpha = clip_weight(weights_sum, thresh = 1e-4).view(shape[0], -1).view(shape[0], -1)
+                bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
 
             save_npz = False;
             if save_npz:

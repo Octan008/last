@@ -67,7 +67,7 @@ class LearnSkeletonPose(nn.Module):
             res = self.pose[frame_id].squeeze()
             with torch.no_grad():
                 for t in self.tails:
-                    res[t] *= 0
+                    res[t] = 0
             return res  # (j, 3, ) axis-angle
         if True:
             quat = self.pose[frame_id, :, :].squeeze() #j, 3

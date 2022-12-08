@@ -516,6 +516,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
             pCaster_origin.load_state_dict(ckpt["state_dict"])
     elif args.caster == "dist":
         pCaster_origin  = DistCaster()
+    elif args.caster == "mlp":
+        pCaster_origin = MLPCaster(len(joints), device)
 
     else:
         try:
@@ -543,6 +545,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # exit("skeleton_load")
 
     lr_grid = 1e-4
+    lr_sh = 1e-4
     if args.pose_type == "euler":
         lr_skel = 1e-2
     else:
@@ -580,21 +583,26 @@ def skeleton_optim(rank, args, n_gpu = 1):
     if args.caster == "sh":
         # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
         #  optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e+1}, {'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
-
+        params =  [{'params': grad_vars_sh_field, 'lr': lr_sh}]
         #姿勢のみ
         # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+        if not args.use_gt_skeleton:
+            params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
 
         #SHFieldのみ
-        optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e-2}], betas=(0.9,0.99))
+        optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
         # print(grad_vars_skeletonpose.params)
         # exit("shcaster")
     elif args.caster == "bwf":
         params = grad_vars_pcaster
-        # params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
+        if not args.use_gt_skeleton:
+            params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
 
     elif args.caster == "dist":
         optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
+    elif args.caster == "mlp":
+        optimizer = torch.optim.Adam( [{'params': pCaster_origin.parameters(), 'lr': 1e-4}], betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0
@@ -702,10 +710,13 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # loss = torch.mean((gt_skeleton_pose - skeleton_dataset(allanimframes[itr+num_frames*rank_diff])) ** 2)
         # #あとで消す
 
-
+        total_loss = 0
+        tvloss = 0
+        linearloss = 0
         if args.caster == "bwf":
             # pass
-            tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)
+            tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)* 10000
+            linearloss = pCaster_origin.linear_loss()* 0.01
             # print(loss, tvloss)
             # exit("tvloss")
 
@@ -721,11 +732,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
             # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
 
             # loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
-            loss += tvloss * 10.0
+            total_loss += tvloss  + linearloss 
 
 
         # loss
-        total_loss = loss
+        total_loss += loss
         if Ortho_reg_weight > 0:
             loss_reg = tensorf.vector_comp_diffs()
             total_loss += Ortho_reg_weight*loss_reg
@@ -754,6 +765,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
         if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
             print("isnanisany", torch.isnan(total_loss).any(),  torch.isinf(total_loss).any())
+            raise ValueError("nan or inf")
         
         PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
         summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
@@ -770,6 +782,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
                 + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
                 + f' mse = {loss:.6f}'
+                + f' tvloss = {tvloss:.6f}'
+                + f' linearloss = {linearloss:.6f}'
             )
             PSNRs = []
 
@@ -798,7 +812,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # exit("EXITING")
                     # if rank == 0:
                     skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
-                    sh_field.save(f'{logfolder}/{args.expname}_sh.th')
+                    sh_field.save(f'{logfolder}/{args.expname}_sh_it{iteration}.th')
                     if not args.caster == "sh":
                         pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
                     tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')

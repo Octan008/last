@@ -102,6 +102,8 @@ def compute_weights(xyzs, joints):
     # exit("render_util, compute_weights")
     return torch.transpose(weights_list, 0, 1)
 
+
+@torch.cuda.amp.autocast(enabled=True)
 def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = True):
     #xyzs -> [N, 3]
     #weights -> [N, J]
@@ -129,15 +131,20 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = Tru
     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
     num_j = weights.shape[1]
     # print(valid.shape, weights.shape, weights_sum.shape)
-    softmax = True
+    if torch.isnan(weights).any() or torch.isinf(weights).any():
+        print("beforezerodiv", torch.isnan(weights).any(),  torch.isinf(weights).any())
+        raise ValueError("nan or inf in weights")
+    softmax = False
     if softmax:
         m = nn.Softmax(dim=1)
         weights = m(weights)
     else:
         weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
     # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-    
-    
+    if torch.isnan(weights).any() or torch.isinf(weights).any():
+        raise ValueError("faterzerodiv"+"nan or inf in weights")
+        
+
     xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
 
     # tmp = torch.matmul(transforms, torch.matmul(weights.unsqueeze(-1), xyzs.unsqueeze(1)).permute(1,2,0)).sum(dim=0).squeeze()
@@ -778,6 +785,8 @@ class Joint():
         if not self.ngp_space:
             center = ngp_vector_to_nerf(center, tensor=True)
         #here already ngp
+        
+
 
         v2 = each_dot(rays_d, rays_d)
         xc = rays_o - center
@@ -787,6 +796,8 @@ class Joint():
         t = each_dot(-rays_d,xc) - torch.sqrt(d)
 
         mask2 = t >= 0.0
+        
+            
         return torch.logical_and(mask, mask2)
 
     def draw_mask_batched(self, rays_o, rays_d, radius, centers):
@@ -814,11 +825,15 @@ class Joint():
 
       
     def draw_mask_all(self, rays_o, rays_d, radius):
+        # names = ['root', 'Sharkthroat', 'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']
+
         mask = self.draw_mask(rays_o, rays_d, radius)
         for i in range(len(self.markers)):
             p2 = self.markers[i]
             mask2 = self.draw_mask(rays_o, rays_d, 0.005, point = torch.matmul(self.global_transform(), torch.matmul(self.bind_inv, p2))[:3])
             mask = torch.logical_or(mask, mask2)
+        # if self.name in ['root', 'SharkHead_tail', 'SharkJaw_tail', 'Sharktail4_tail', 'Rightfena3_tail', 'Leftfena3_tail']:
+        #     mask = rays_o[...,0] > 1000000000000
         for c in self.children:
             mask2 = c.draw_mask_all(rays_o, rays_d, radius)
             mask = torch.logical_or(mask, mask2)
