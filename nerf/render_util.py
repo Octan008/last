@@ -21,8 +21,8 @@ def clip_weight(val, thresh = 1e-4, min=0, max=1):
 
 def affine_inverse_batch(bmatrix, device="cuda"):
     # inv = torch.eye(4, device=device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
-    # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
-    inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).expand(bmatrix.shape[0], -1, -1)
+    inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+    # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).expand(bmatrix.shape[0], -1, -1)
     inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
     inv[:,:3, 3] = torch.bmm(torch.transpose(bmatrix[:,:3,:3], 1, 2), -bmatrix[:,:3,3].unsqueeze(-1)).squeeze()
     return inv
@@ -442,12 +442,12 @@ def euler_to_matrix_batch(angle = None):
             torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
             torch.stack([cx*sz+cz*sx*sy, cx*cz-sx*sy*sz,   -cy*sx],dim=0),
             torch.stack([sx*sz-cx*cz*sy,   cz*sx+cx*sy*sz, cx*cy],dim=0),
-            # torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1])
-            torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).expand(-1, angle.shape[1])
+            torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1])
+            # torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).expand(-1, angle.shape[1])
         ], dim=0), torch.tensor(
             [0.0,0.0,0.0,1.0], device=angle.device
-        # ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[1])], dim=1)
-        ).unsqueeze(1).unsqueeze(1).expand(-1,-1,angle.shape[1])], dim=1)
+        ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[1])], dim=1)
+        # ).unsqueeze(1).unsqueeze(1).expand(-1,-1,angle.shape[1])], dim=1)
 
 
 def make_transform(angle=None, translate = None):
@@ -864,8 +864,8 @@ class Joint():
          1 -1  1 -1
         -1 -1  2 -1
         '''
-        # self.precomp_mats = self.myeye(4).repeat(self.precomp_num_joints, self.precomp_depth, 1, 1)
-        self.precomp_mats = self.myeye(4).expand(self.precomp_num_joints, self.precomp_depth, -1, -1)
+        self.precomp_mats = self.myeye(4).repeat(self.precomp_num_joints, self.precomp_depth, 1, 1)
+        # self.precomp_mats = self.myeye(4).expand(self.precomp_num_joints, self.precomp_depth, -1, -1)
         for i in range(len(self.precomp_ids)):# for J
             self.precomp_mats = torch.where(
                 (mats_ids==self.precomp_ids[i]).unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 4, 4), # 関係inds行列から該当jointをとりだし、4*4化
@@ -911,8 +911,8 @@ class Joint():
         elif type=="euler":
             animations = euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1)
         #[J, 4, 4]
-        # mats2 = self.myeye(4).repeat(self.precomp_num_joints, self.precomp_depth, 1, 1)
-        mats2 = self.myeye(4).expand(self.precomp_num_joints, self.precomp_depth, -1, -1)
+        mats2 = self.myeye(4).repeat(self.precomp_num_joints, self.precomp_depth, 1, 1)
+        # mats2 = self.myeye(4).expand(self.precomp_num_joints, self.precomp_depth, -1, -1)
         #[J, D, 4, 4] / Dは最大のskeletonの深さ
         for i in range(len(self.precomp_ids)): # for J
             # if i in self.tails:

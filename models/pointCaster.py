@@ -415,11 +415,11 @@ class shCaster(CasterBase):
             raise ValueError("nan or inf")
         xyz = []
         for j in range(locs.shape[0]):
-            # xyz.append(torch.bmm(invs[j].unsqueeze(0).repeat(xyz_new.shape[0], 1, 1), xyz_new.unsqueeze(-1)).squeeze())#[samples, 4]
-            xyz.append(torch.bmm(invs[j].unsqueeze(0).expand(xyz_new.shape[0], -1, -1), xyz_new.unsqueeze(-1)).squeeze())#[samples, 4]
+            xyz.append(torch.bmm(invs[j].unsqueeze(0).repeat(xyz_new.shape[0], 1, 1), xyz_new.unsqueeze(-1)).squeeze())#[samples, 4]
+            # xyz.append(torch.bmm(invs[j].unsqueeze(0).expand(xyz_new.shape[0], -1, -1), xyz_new.unsqueeze(-1)).squeeze())#[samples, 4]
         xyz = torch.stack(xyz, dim=0)[:,:,:3]#[j,samples,3]
-        # viewdirs = locs.unsqueeze(-2).repeat(1,xyz.shape[1], 1) - xyz #(j, sample, 3)
-        viewdirs = locs.unsqueeze(-2).expand(-1,xyz.shape[1], -1) - xyz #(j, sample, 3)
+        viewdirs = locs.unsqueeze(-2).repeat(1,xyz.shape[1], 1) - xyz #(j, sample, 3)
+        # viewdirs = locs.unsqueeze(-2).expand(-1,xyz.shape[1], -1) - xyz #(j, sample, 3)
         # lengths = torch.norm(viewdirs, dim=-1)
         lengths = torch.nan_to_num(torch.linalg.norm(viewdirs, dim=-1))
         if torch.isnan(lengths).any() or torch.isinf(lengths).any():
@@ -434,8 +434,8 @@ class shCaster(CasterBase):
         rad_sh = self.sh_feats.view(locs.shape[0], 1, sh_mult.shape[-1])#(j, 1, 9)
         if torch.isnan(rad_sh).any() or torch.isinf(rad_sh).any():
             raise ValueError("nan or inf")
-        # rads = torch.relu(torch.sum(sh_mult * rad_sh.repeat(1, xyz.shape[1], 1), dim=-1) + 0.5)#(j,sample,  1)
-        rads = torch.relu(torch.sum(sh_mult * rad_sh.expand(-1, xyz.shape[1], -1), dim=-1) + 0.5)#(j,sample,  1)
+        rads = torch.relu(torch.sum(sh_mult * rad_sh.repeat(1, xyz.shape[1], 1), dim=-1) + 0.5)#(j,sample,  1)
+        # rads = torch.relu(torch.sum(sh_mult * rad_sh.expand(-1, xyz.shape[1], -1), dim=-1) + 0.5)#(j,sample,  1)
         if torch.isnan(rads).any() or torch.isinf(rads).any():
             raise ValueError("nan or inf")
         #42
