@@ -27,7 +27,7 @@ parallel = False
 # dist_test = True
 indivInv = False
 rank_criteria = 0
-
+mix_precision = False
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 renderer = OctreeRender_trilinear_fast
@@ -579,7 +579,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
     #<Training> Setup Optimizer
     # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
-
+    if mix_precision:
+        scaler = torch.cuda.amp.GradScaler() # for mixed precision
     if args.caster == "sh":
         # optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
         #  optimizer = torch.optim.Adam( [{'params': grad_vars_sh_field, 'lr': 1e+1}, {'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
@@ -678,7 +679,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         tensorf.set_render_flags()
         torch.cuda.empty_cache()
 
-        idx = torch.randint(0, ray_per_img, size=[args.batch_size], device=device)
+        # idx = torch.randint(0, ray_per_img, size=[args.batch_size], device=device)
+        idx = torch.randint(0, ray_per_img, size=[4096], device=device)
         rays_train = torch.index_select(allrays[itr+num_frames*rank_diff].to(device), 0, idx)
         rgb_train = torch.index_select(allrgbs[itr+num_frames*rank_diff].to(device), 0, idx)
         
@@ -697,194 +699,208 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # print(rays_train.shape)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
-                                N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
-        # exit("distman?")
-        loss = torch.mean((rgb_map - rgb_train) ** 2)
-        # #あとで消す
-        # # print(skeleton_dataset(allanimframes[itr+num_frames*rank_diff]).shape)
-        # tmp_framepose = test_dataset.frame_poses[itr+num_frames*rank_diff]
-        # for j in skeleton.get_children():
-        #     apply_animation(tmp_framepose, j)
-        # gt_skeleton_pose = skeleton.get_listed_rotations(type ="quaternion")
-        # loss = torch.mean((gt_skeleton_pose - skeleton_dataset(allanimframes[itr+num_frames*rank_diff])) ** 2)
-        # #あとで消す
+        with torch.cuda.amp.autocast(): 
+            rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
+                                    N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
+            # exit("distman?")
+            loss = torch.mean((rgb_map - rgb_train) ** 2)
+            # #あとで消す
+            # # print(skeleton_dataset(allanimframes[itr+num_frames*rank_diff]).shape)
+            # tmp_framepose = test_dataset.frame_poses[itr+num_frames*rank_diff]
+            # for j in skeleton.get_children():
+            #     apply_animation(tmp_framepose, j)
+            # gt_skeleton_pose = skeleton.get_listed_rotations(type ="quaternion")
+            # loss = torch.mean((gt_skeleton_pose - skeleton_dataset(allanimframes[itr+num_frames*rank_diff])) ** 2)
+            # #あとで消す
 
-        total_loss = 0
-        tvloss = 0
-        linearloss = 0
-        if args.caster == "bwf":
-            # pass
-            tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)* 10000
-            linearloss = pCaster_origin.linear_loss()* 0.01
-            # print(loss, tvloss)
-            # exit("tvloss")
+            total_loss = 0
+            tvloss = 0
+            linearloss = 0
+            if args.caster == "bwf":
+                # pass
+                # tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)* 10000
+                tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)* 100
+                linearloss = pCaster_origin.linear_loss()* 0.01
+                # print(loss, tvloss)
+                # exit("tvloss")
 
-        
-            # sigma = tensorf.get_density(box.reshape(-1,3))
-            # weights = pCaster_origin.sample_BWfield(
-            #     pCaster_origin.normalize_coord(box.reshape(-1,3).unsqueeze(0).repeat(20,1,1))
-            # )
+            
+                # sigma = tensorf.get_density(box.reshape(-1,3))
+                # weights = pCaster_origin.sample_BWfield(
+                #     pCaster_origin.normalize_coord(box.reshape(-1,3).unsqueeze(0).repeat(20,1,1))
+                # )
 
-            # # print(sigma.shape, weights.shape)
-            # # exit()
-            # loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
-            # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
+                # # print(sigma.shape, weights.shape)
+                # # exit()
+                # loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
+                # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
 
-            # loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
-            total_loss += tvloss  + linearloss 
-
-
-        # loss
-        total_loss += loss
-        if Ortho_reg_weight > 0:
-            loss_reg = tensorf.vector_comp_diffs()
-            total_loss += Ortho_reg_weight*loss_reg
-            summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
-        if L1_reg_weight > 0:
-            loss_reg_L1 = tensorf.density_L1()
-            total_loss += L1_reg_weight*loss_reg_L1
-            summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
-
-        if TV_weight_density>0:
-            TV_weight_density *= lr_factor
-            loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
-            total_loss = total_loss + loss_tv
-            summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
-        if TV_weight_app>0:
-            TV_weight_app *= lr_factor
-            loss_tv = loss_tv + tensorf.TV_loss_app(tvreg)*TV_weight_app
-            total_loss = total_loss + loss_tv
-            summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
-
-        optimizer.zero_grad()
-        total_loss.backward()
-        optimizer.step()
-
-        loss = loss.detach().item()
-
-        if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
-            print("isnanisany", torch.isnan(total_loss).any(),  torch.isinf(total_loss).any())
-            raise ValueError("nan or inf")
-        
-        PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
-        summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
-        summary_writer.add_scalar('train/mse', loss, global_step=iteration)
+                # loss += tvloss * 100.0 + loss_sigma * 0.1 + loss_overone * 0.1
+                total_loss += tvloss  + linearloss 
 
 
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = param_group['lr'] * lr_factor
+            # loss
+            total_loss += loss
+            if Ortho_reg_weight > 0:
+                loss_reg = tensorf.vector_comp_diffs()
+                total_loss += Ortho_reg_weight*loss_reg
+                summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
+            if L1_reg_weight > 0:
+                loss_reg_L1 = tensorf.density_L1()
+                total_loss += L1_reg_weight*loss_reg_L1
+                summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
 
-        # Print the current values of the losses.
-        if iteration % args.progress_refresh_rate == 0:
-            pbar.set_description(
-                f'Iteration {iteration:05d}:'
-                + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
-                + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
-                + f' mse = {loss:.6f}'
-                + f' tvloss = {tvloss:.6f}'
-                + f' linearloss = {linearloss:.6f}'
-            )
-            PSNRs = []
+            if TV_weight_density>0:
+                TV_weight_density *= lr_factor
+                loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
+                total_loss = total_loss + loss_tv
+                summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
+            if TV_weight_app>0:
+                TV_weight_app *= lr_factor
+                loss_tv = loss_tv + tensorf.TV_loss_app(tvreg)*TV_weight_app
+                total_loss = total_loss + loss_tv
+                summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
+
+            optimizer.zero_grad()
+            if mix_precision:
+                scaler.scale(total_loss).backward()
+            else:
+                total_loss.backward()
+            
+            
+
+            loss = loss.detach().item()
+
+            if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
+                print("isnanisany", torch.isnan(total_loss).any(),  torch.isinf(total_loss).any())
+                raise ValueError("nan or inf")
+            
+            PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
+            summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
+            summary_writer.add_scalar('train/mse', loss, global_step=iteration)
 
 
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = param_group['lr'] * lr_factor
 
-        # if dist_test and itr == 1:
-        #     with torch.no_grad():
-        #         rays_train = allrays[itr+num_frames*rank_diff]
-        #         rgb_train = allrgbs[itr+num_frames*rank_diff]
-        #         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.test_batch_size,
-        #                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
-        #         rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
-        #         gt_rgb = (rgb_train.cpu().numpy() * 255).astype('uint8')
-        #         H,W = train_dataset.img_wh
-        #         rgb_map = np.concatenate((rgb_map.reshape(H,W,3), gt_rgb.reshape(H,W,3)), axis=1)
-        #         imageio.imwrite(f'{logfolder}/{args.expname}_dist_test{iteration:03d}.png', rgb_map)
-        
-        #<Training> Test and Save the model.
-        with torch.no_grad():
-            if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-                if rank == rank_criteria:
-                    skeleton_props ={"skeleton_dataset": skeleton_dataset}
-                    PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
-                    summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-                    # tensorf.save(f'{logfolder}/{args.expname}.th')
-                    # exit("EXITING")
-                    # if rank == 0:
-                    skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
-                    sh_field.save(f'{logfolder}/{args.expname}_sh_it{iteration}.th')
-                    if not args.caster == "sh":
-                        pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
-                    tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
+            # Print the current values of the losses.
+            if iteration % args.progress_refresh_rate == 0:
+                pbar.set_description(
+                    f'Iteration {iteration:05d}:'
+                    + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
+                    + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
+                    + f' mse = {loss:.6f}'
+                    + f' tvloss = {tvloss:.6f}'
+                    + f' linearloss = {linearloss:.6f}'
+                )
+                PSNRs = []
+            
+            del rgb_map, alphas_map, depth_map, weights, uncertainty, loss, total_loss, tvloss, linearloss
+            if mix_precision:
+                scaler.step(optimizer) 
+            else:
+                optimizer.step()
+            
+            scaler.update() 
 
 
 
-        # if iteration in update_AlphaMask_list:
-
-        #     if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
-        #         reso_mask = reso_cur
-        #     new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
-        #     if iteration == update_AlphaMask_list[0]:
-        #         tensorf.shrink(new_aabb)
-        #         # tensorVM.alphaMask = None
-        #         L1_reg_weight = args.L1_weight_rest
-        #         print("continuing L1_reg_weight", L1_reg_weight)
-
-
-            # if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
-            #     # filter rays outside the bbox
-            #     allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
-            #     trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
-
-
-        # if iteration in upsamp_list:
-        #     n_voxels = N_voxel_list.pop(0)
-        #     reso_cur = N_to_reso(n_voxels, tensorf.aabb)
-        #     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-        #     tensorf.upsample_volume_grid(reso_cur)
-
-        #     if args.lr_upsample_reset:
-        #         print("reset lr to initial")
-        #         lr_scale = 1 #0.1 ** (iteration / args.n_iters)
-        #     else:
-        #         lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-        #     # grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
-        #     # optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
-        #     grad_vars = skeleton_dataset.parameters()
-        #     optimizer = torch.optim.Adam([{'params': grad_vars, 'lr': args.lr_init}], betas=(0.9,0.99))
-        itr += 1
-        # exit()
-        
-    # exit("exit_before_save")
-    if rank == rank_criteria:
-        skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
-        sh_field.save(f'{logfolder}/{args.expname}_sh.th')
-        pCaster.save( f'{logfolder}/{args.expname}_pCaster.th')
-        tensorf.save(f'{logfolder}/{args.expname}.th')
-        
+            # if dist_test and itr == 1:
+            #     with torch.no_grad():
+            #         rays_train = allrays[itr+num_frames*rank_diff]
+            #         rgb_train = allrgbs[itr+num_frames*rank_diff]
+            #         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.test_batch_size,
+            #                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
+            #         rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
+            #         gt_rgb = (rgb_train.cpu().numpy() * 255).astype('uint8')
+            #         H,W = train_dataset.img_wh
+            #         rgb_map = np.concatenate((rgb_map.reshape(H,W,3), gt_rgb.reshape(H,W,3)), axis=1)
+            #         imageio.imwrite(f'{logfolder}/{args.expname}_dist_test{iteration:03d}.png', rgb_map)
+            
+            #<Training> Test and Save the model.
+            with torch.no_grad():
+                if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
+                    if rank == rank_criteria:
+                        skeleton_props ={"skeleton_dataset": skeleton_dataset}
+                        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
+                        summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
+                        # tensorf.save(f'{logfolder}/{args.expname}.th')
+                        # exit("EXITING")
+                        # if rank == 0:
+                        skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
+                        sh_field.save(f'{logfolder}/{args.expname}_sh_it{iteration}.th')
+                        if not args.caster == "sh":
+                            pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
+                        tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
 
 
-    if args.render_train:
-        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
-    if args.render_test:
-        os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+            # if iteration in update_AlphaMask_list:
 
-    if args.render_path:
-        c2ws = test_dataset.render_path
-        # c2ws = test_dataset.poses
-        print('========>',c2ws.shape)
-        os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+            #     if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
+            #         reso_mask = reso_cur
+            #     new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
+            #     if iteration == update_AlphaMask_list[0]:
+            #         tensorf.shrink(new_aabb)
+            #         # tensorVM.alphaMask = None
+            #         L1_reg_weight = args.L1_weight_rest
+            #         print("continuing L1_reg_weight", L1_reg_weight)
+
+
+                # if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
+                #     # filter rays outside the bbox
+                #     allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
+                #     trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
+
+
+            # if iteration in upsamp_list:
+            #     n_voxels = N_voxel_list.pop(0)
+            #     reso_cur = N_to_reso(n_voxels, tensorf.aabb)
+            #     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
+            #     tensorf.upsample_volume_grid(reso_cur)
+
+            #     if args.lr_upsample_reset:
+            #         print("reset lr to initial")
+            #         lr_scale = 1 #0.1 ** (iteration / args.n_iters)
+            #     else:
+            #         lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
+            #     # grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
+            #     # optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
+            #     grad_vars = skeleton_dataset.parameters()
+            #     optimizer = torch.optim.Adam([{'params': grad_vars, 'lr': args.lr_init}], betas=(0.9,0.99))
+            itr += 1
+            # exit()
+            
+        # exit("exit_before_save")
+        if rank == rank_criteria:
+            skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
+            sh_field.save(f'{logfolder}/{args.expname}_sh.th')
+            pCaster.save( f'{logfolder}/{args.expname}_pCaster.th')
+            tensorf.save(f'{logfolder}/{args.expname}.th')
+            
+
+
+        if args.render_train:
+            os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
+            train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
+            PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
+                                    N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+            print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+
+        if args.render_test:
+            os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
+            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
+                                    N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+            summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
+            print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+
+        if args.render_path:
+            c2ws = test_dataset.render_path
+            # c2ws = test_dataset.poses
+            print('========>',c2ws.shape)
+            os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
+            evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
+                                    N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 
 

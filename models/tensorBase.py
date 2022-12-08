@@ -747,6 +747,7 @@ class TensorBase(torch.nn.Module):
             # dist weights
             # self.caster.set_joints(self.joints)
             if_cast = True
+            torch.cuda.empty_cache()
             if if_cast:
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid)
                 # self.clamp_pts(self, xyz_sampled)
@@ -759,6 +760,7 @@ class TensorBase(torch.nn.Module):
                 save_npz = {}
                 save_npz["weights"] = self.caster_weights.cpu().numpy()
                 save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
+            torch.cuda.empty_cache()
 
         # print(self.use_ngprender)
         # exit("debug_self.use_ngprender:")
@@ -914,7 +916,7 @@ class TensorBase(torch.nn.Module):
             # print(xyz_sampled.shape, xyz_sampled.reshape(-1,3).shape)
             # print(xyz_sampled[ray_valid].shape)
             sigma_feature = self.compute_densityfeature(xyz_sampled[ray_valid])
-            
+            torch.cuda.empty_cache()
 
             validsigma = self.feature2density(sigma_feature)
             sigma[ray_valid] = validsigma
@@ -935,7 +937,7 @@ class TensorBase(torch.nn.Module):
 
         alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
         weight = weight * bg_alpha
-
+        torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
 
         # Compute_alpha
