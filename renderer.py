@@ -89,6 +89,15 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
                 #     apply_animation(test_dataset.frame_poses[idxs[idx]], j)
                 # gt_skeleton_pose = tensorf.skeleton.get_listed_rotations(type=args.pose_type)
                 gt_skeleton_pose = test_dataset.frame_skeleton_pose[idxs[idx]]
+                if args.free_opt4:
+                    tensorf.skeleton.rotations_to_transforms_fast(gt_skeleton_pose, type = args.pose_type)
+                    tfs = tensorf.skeleton.precomp_forward_global_transforms
+                    # print(tfs.shape)
+                    # translates = tfs[...,:3, 3]
+      
+                    # rotations = tensorf.skeleton.matrix_to_euler_pos(tfs[...,:3,:3].permute(1,2,0)).permute(1,0)
+                    # gt_skeleton_pose = torch.cat([torch.zeros_like(translates).to(translates.device), translates], dim=-1)
+                    gt_skeleton_pose = tfs
                 skeleton_props = {"frame_pose": gt_skeleton_pose}
                 # print(gt_skeleton_pose.shape)
             

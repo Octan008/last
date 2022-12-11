@@ -35,6 +35,8 @@ class LearnSkeletonPose(nn.Module):
         elif type=="matrix":
             tmp = torch.eye(4, dtype=torch.float32).unsqueeze(0).unsqueeze(0).repeat(num_frames, num_joints, 4, 4)
             self.pose = nn.Parameter(tmp, requires_grad=learn)  # (N, j, 3)
+        elif type=="para_six":
+            self.pose = nn.Parameter(torch.zeros(size=(num_frames, num_joints, 6), dtype=torch.float32), requires_grad=learn)
         # self.t = nn.Parameter(torch.zeros(size=(num_frames, 3), dtype=torch.float32), requires_grad=learn_t)  # (N, 3)
 
     def pin_mode(self, flag):
@@ -69,6 +71,13 @@ class LearnSkeletonPose(nn.Module):
                 for t in self.tails:
                     res[t] = 0
             return res  # (j, 3, ) axis-angle
+        if self.type == "para_six":
+            res = self.pose[frame_id].squeeze()
+            res[..., 3:] *= 0.01
+            with torch.no_grad():
+                for t in self.tails:
+                    res[t] = 0
+            return res
         if True:
             quat = self.pose[frame_id, :, :].squeeze() #j, 3
             # with torch.no_grad():

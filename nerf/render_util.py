@@ -551,6 +551,7 @@ class Joint():
 
         return torch.stack([theta1, theta2, theta3], dim=0)
 
+
     def precompute_id(self, next_id):
         self.id = next_id
         tmp_id = self.id
@@ -612,6 +613,59 @@ class Joint():
     
     def rotations_to_invs(self, poses, parent=None, type="euler"):
         return affine_inverse_batch(self.rotations_to_transforms(poses, parent=parent, type=type))
+
+    def para_precompute(self, nj):
+        self.precomp_num_joints = nj
+        self.precomp_depth = self.compute_depth(0)
+        self.precomp_trans_ids = self.compute_transform_ids([])
+        # depthに沿って計算すべきjoint のidが並ぶ
+        self.precomp_ids = self.get_listed_ids()
+        self.precomp_trans = self.get_listed_transforms_initial()
+        # initial_transform = bind のリスト
+        self.precomp_bindinvs = self.get_listed_transforms_bindinv()
+
+
+
+    def para_rotations_to_transforms(self, poses, type="euler"):
+        if torch.is_tensor(poses[self.id]):
+            pose = self.pose_converter(poses[self.id], type) # as radian
+        else:
+            pose = self.pose_converter(torch.tensor(poses[self.id], dtype=torch.float32, device=torch.device(poses.device)), type)
+
+        self.precomp_forward_global_transform = torch.matmul(pose, self.bind_inv)
+        res = [self.precomp_forward_global_transform]
+        
+        for c in self.children:
+            res.extend(c.para_rotations_to_transforms(poses, type=type))
+
+        return torch.stack(res, dim=0)
+
+    def para_rotations_to_transforms_fast(self, poses, type="quaternion"):
+        # print(poses.shape, type)
+        # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)
+        # return torch.bmm(poses, self.precomp_bindinvs)
+        tmp = poses
+        translates = poses[...,:3, 3]
+      
+        rotations = self.matrix_to_euler_pos(poses[...,:3,:3].permute(1,2,0)).permute(1,0)
+        # translates = poses[...,3:]
+        # poses = poses[...,:3]
+        # poses = torch.cat([rotations, translates], dim=-1)
+        poses = rotations
+
+        # exit("rotations_to_invs_fast")
+        if type=="quaternion":
+            animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
+        elif type=="euler":
+            animations = euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1)
+        # print(animations.shape, translates.shape, poses.shape)
+        print(animations[...,:3,:3] - tmp[...,:3,:3])
+        # print(animations[...,:3,3] - translates)
+        exit()
+
+        animations[:,:3,3] = translates
+        return torch.bmm(animations, self.precomp_bindinvs)
+
 
     
 

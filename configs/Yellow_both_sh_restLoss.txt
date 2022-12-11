@@ -1,13 +1,15 @@
-
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  debug++
-basedir = ./log_trash
-add_timestamp = 0
-
+expname =  #Yellow_optim_freq_normal
+basedir = ./refreshlog
+#basedir = ./log_trash
+add_timestamp = 1
+local_batching = 0
 
 caster = mlp
 use_gt_skeleton = 1
+free_opt1 = 1
+#lr_skel = 1e-1
 
 pose_type = euler
 

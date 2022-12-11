@@ -1,9 +1,2 @@
-# nohup python train.py --config configs/shark.txt &
-# python train.py --config configs/shark.txt
-# python train.py --config configs/shark.txt --ckpt ./log/tensorf_shark_VM/tensorf_shark_VM.th --render_only 1 --render_test 1 
-
-# python train.py --config configs/shark.txt --render_only 1 --render_test 1 
-# python train.py --config configs/shark.txt --render_only 1 --render_test 0
-# python train.py --config configs/shark.txt # --render_only 1 --render_test 1
-# python train.py --config configs/dist.txt # --render_only 1 --render_test 1
-python train.py --config configs/shark_gtmlp.txt --rank_criteria 0
+export CUDA_VISIBLE_DEVICES="0"
+python train.py --config configs/Blue_mlp_reduceHiddenDim.txt --rank_criteria 0

@@ -1,9 +1,2 @@
-# nohup python train.py --config configs/shark.txt &
-# python train.py --config configs/shark.txt
-# python train.py --config configs/shark.txt --ckpt ./log/tensorf_shark_VM/tensorf_shark_VM.th --render_only 1 --render_test 1 
-
-# python train.py --config configs/shark.txt --render_only 1 --render_test 1 
-# python train.py --config configs/shark.txt --render_only 1 --render_test 0
-# python train.py --config configs/shark.txt # --render_only 1 --render_test 1
-# python train.py --config configs/dist.txt # --render_only 1 --render_test 1
-python train.py --config configs/shark_gtBwf_tvloss.txt --rank_criteria 1
+export CUDA_VISIBLE_DEVICES="1"
+python train.py --config configs/Yellow_both_sh_restLoss.txt --rank_criteria 0

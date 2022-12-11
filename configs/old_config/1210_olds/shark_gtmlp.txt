@@ -1,10 +1,10 @@
 
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  debug++
-basedir = ./log_trash
-add_timestamp = 0
-
+expname =  ###blue_mlp_batch
+basedir = ./refreshlog
+add_timestamp = 1
+local_batching = 0
 
 caster = mlp
 use_gt_skeleton = 1
@@ -25,7 +25,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 
 n_iters = 300000
 #batch_size = 4096
-batch_size = 512
+batch_size = 256
 test_batch_size = 1024
 progress_refresh_rate = 1
 

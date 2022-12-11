@@ -7,8 +7,8 @@ class SphereHarmonicJoints(nn.Module):
         self.dim = dim
         self.num_joints = num_joints
         super(SphereHarmonicJoints, self).__init__()
-        feats = torch.zeros(num_joints, dim)
-        feats[:,0] = 30.0
+        feats = torch.ones(num_joints, dim) * 0.1
+        feats[:,0] *= 10
         self.feats = nn.Parameter(feats, requires_grad=True)
         # self.feats = nn.Parameter(torch.tensor([30.0], dtype=torch.float32).unsqueeze(0).repeat(num_joints, dim), requires_grad=True)#.to("cuda:0")  # (j, dim, 1)
         # print("init", self.state_dict().keys())

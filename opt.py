@@ -47,6 +47,13 @@ def config_parser(cmd=None):
     parser.add_argument("--lr_upsample_reset", type=int, default=1,
                         help='reset lr to inital after upsampling')
 
+    parser.add_argument("--lr_skel", type=float, default=1e-2,
+                            help='learning rate')    
+    parser.add_argument("--lr_mlp", type=float, default=1e-4,
+                            help='learning rate')    
+    parser.add_argument("--lr_sh", type=float, default=1e-4,
+                            help='learning rate')    
+
     # loss
     parser.add_argument("--L1_weight_inital", type=float, default=0.0,
                         help='loss weight')
@@ -113,7 +120,13 @@ def config_parser(cmd=None):
                 help='specific weights npy file to reload for coarse network')
 
     parser.add_argument("--use_gt_skeleton", type=int, default=0)
+    parser.add_argument("--local_batching", type=int, default=0)
     parser.add_argument("--data_preparation", type=int, default=0)
+
+    parser.add_argument("--free_opt1", type=int, default=0)
+    parser.add_argument("--free_opt2", type=int, default=0)
+    parser.add_argument("--free_opt3", type=int, default=0)
+    parser.add_argument("--free_opt4", type=int, default=0)
 
     parser.add_argument("--ngp_render", type=int, default=0)
 
