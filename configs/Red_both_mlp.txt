@@ -3,7 +3,7 @@ datadir = ./data/nerf_synthetic/anim
 expname =  #Red_para_mlp
 #basedir = ./refreshlog
 basedir = ./log_trash
-add_timestamp = 1
+add_timestamp = 0
 local_batching = 0
 
 caster = sh

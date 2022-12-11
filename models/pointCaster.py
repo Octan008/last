@@ -294,10 +294,10 @@ class MLPCaster_integrate2(MLPCaster):
 
         self.encoder = self.encoder.to(device)
 
-        self.integrated_weight_net = []
+        weight_nets = []
         for i in range(dim):
 
-            self.integrated_weight_net.append(
+            weight_nets.append(
                 FFMLP(
                     # input_dim=self.in_dim, 
                     input_dim=self.interface_dim, 
@@ -307,7 +307,7 @@ class MLPCaster_integrate2(MLPCaster):
                     num_layers=self.num_layers,
                 ).to(device)
             )
-        self.integrated_weight_net = nn.ModuleList(self.integrated_weight_net)
+        self.weight_nets = nn.ModuleList(weight_nets)
 
     @torch.cuda.amp.autocast(enabled=True)    
     def density(self, x):
@@ -317,15 +317,15 @@ class MLPCaster_integrate2(MLPCaster):
         
         # x: [J, N, 3], in [-bound, bound]
         res = []
-        for i in range(len(self.integrated_weight_net)):
+        for i in range(len(self.weight_nets)):
             tmp = self.encoder(x[i], bound=self.bound)
             tmp = self.interface_layer(tmp)
-            h = self.integrated_weight_net[i](tmp)
+            h = self.weight_nets[i](tmp)
             res.append(h)
         # J, N, 3 :res
-        res = torch.stack(res, dim=0).permute(1,0,2).contiguous().view(-1, self.j_dim*3)
+        res = torch.stack(res, dim=0)
+        res = res.permute(1,0,2).contiguous().view(-1, self.j_dim*3)
         res = self.after_interface(res)
-        # print(res.shape)
         return F.relu(res).permute(1,0)
 
 

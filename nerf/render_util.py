@@ -14,6 +14,8 @@ from .provider import *
 
 import time
 
+from pytorch3d import transforms as p3d_transforms
+
 my_torch_device = "cuda"
 
 def clip_weight(val, thresh = 1e-4, min=0, max=1):
@@ -402,6 +404,13 @@ def euler_to_matrix(angle = None, translate = None):
     if translate is not None:
         mat[:3, 3] = translate
     if angle is not None:
+        mat = p3d_transforms.euler_angles_to_matrix(angle[...].permute(1,0), convention="XYZ")
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1)], dim=0)
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1).t()], dim=0)
+        print(mat.shape)
+        print(mat[...,0])
+        exit()
+        return 
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
         cx, cy, cz = torch.cos(torch.deg2rad(angle))
 
@@ -414,6 +423,13 @@ def euler_to_matrix(angle = None, translate = None):
         ], dim=0), torch.tensor(
             [0.0,0.0,0.0,1.0], device=angle.device
         ).unsqueeze(1)], dim=1)
+def euler_to_matrix_batch2(angle=None):
+        
+    if angle is not None:
+        mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle[...].permute(1,0)), convention="XYZ")
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0).unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=1)
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(0).t().unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=-1)
+        return mat
 
 def euler_to_matrix_batch(angle = None):
     # mat = torch.eye(4, device=torch.device(my_torch_device))
@@ -538,12 +554,15 @@ class Joint():
             return  input.to(device)
 
     def matrix_to_euler_pos(self, matrix):
+        return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
         theta1 = torch.arctan(-r23 / r33)
         theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
         theta3 = torch.arctan(-r12 / r11)
+        # theta2 = torch.asin(-r31)
+
         theta1 = theta1 * 180 / np.pi
         theta2 = theta2 * 180 / np.pi
         theta3 = theta3 * 180 / np.pi # as euler
@@ -644,26 +663,21 @@ class Joint():
         # print(poses.shape, type)
         # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)
         # return torch.bmm(poses, self.precomp_bindinvs)
-        tmp = poses
-        translates = poses[...,:3, 3]
-      
-        rotations = self.matrix_to_euler_pos(poses[...,:3,:3].permute(1,2,0)).permute(1,0)
-        # translates = poses[...,3:]
-        # poses = poses[...,:3]
-        # poses = torch.cat([rotations, translates], dim=-1)
-        poses = rotations
+        translates = poses[...,3:]
+        poses = poses[...,:3]
 
         # exit("rotations_to_invs_fast")
         if type=="quaternion":
             animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
         elif type=="euler":
-            animations = euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1)
-        # print(animations.shape, translates.shape, poses.shape)
-        print(animations[...,:3,:3] - tmp[...,:3,:3])
-        # print(animations[...,:3,3] - translates)
-        exit()
+            animations = euler_to_matrix_batch2(torch.transpose(poses, 0, 1))
+        # # print(animations.shape, translates.shape, poses.shape)
+        # print(animations[...,:3,:3] - tmp[...,:3,:3])
+        # # print(animations[...,:3,3] - translates)
+        # exit()
 
         animations[:,:3,3] = translates
+        self.precomp_forward_global_transforms = animations
         return torch.bmm(animations, self.precomp_bindinvs)
 
 
