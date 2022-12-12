@@ -302,7 +302,7 @@ class MLPCaster_integrate2(MLPCaster):
                     # input_dim=self.in_dim, 
                     input_dim=self.interface_dim, 
                     # input_dim=3, 
-                    output_dim=3,
+                    output_dim=1,
                     hidden_dim=self.hidden_dim,
                     num_layers=self.num_layers,
                 ).to(device)
@@ -324,9 +324,10 @@ class MLPCaster_integrate2(MLPCaster):
             res.append(h)
         # J, N, 3 :res
         res = torch.stack(res, dim=0)
-        res = res.permute(1,0,2).contiguous().view(-1, self.j_dim*3)
-        res = self.after_interface(res)
-        return F.relu(res).permute(1,0)
+        # res = res.permute(1,0,2).contiguous().view(-1, self.j_dim*3)
+        # res = self.after_interface(res)
+        # return F.relu(res).permute(1,0)
+        return F.relu(res).squeeze()
 
 
 

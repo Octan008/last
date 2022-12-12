@@ -752,23 +752,23 @@ class TensorBase(torch.nn.Module):
             if_cast = True
             torch.cuda.empty_cache()
             if if_cast:
-                if self.args.free_opt4:
-                    # self.old_xyz_sampled = xyz_sampled
-                    dummy_transforms = torch.eye(4).repeat(transforms.shape[0], 1, 1).to(transforms.device)
-                    trash1, trash2 = self.caster(xyz_sampled, viewdirs, dummy_transforms, ray_valid)
-                    old_caster_weights = self.caster_origin.get_weights()
-                    weights_sum = torch.sum(old_caster_weights, dim=1)
-                    self.old_bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
+                # if self.args.free_opt4:
+                #     # self.old_xyz_sampled = xyz_sampled
+                #     dummy_transforms = torch.eye(4).repeat(transforms.shape[0], 1, 1).to(transforms.device)
+                #     trash1, trash2 = self.caster(xyz_sampled, viewdirs, dummy_transforms, ray_valid)
+                #     old_caster_weights = self.caster_origin.get_weights()
+                #     weights_sum = torch.sum(old_caster_weights, dim=1)
+                #     self.old_bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
 
-                    sigma_feature = self.compute_densityfeature(self.normalize_coord(xyz_sampled).reshape(shape[0],shape[1], 3)[ray_valid])
-                    torch.cuda.empty_cache()
+                #     sigma_feature = self.compute_densityfeature(self.normalize_coord(xyz_sampled).reshape(shape[0],shape[1], 3)[ray_valid])
+                #     torch.cuda.empty_cache()
 
-                    validsigma = self.feature2density(sigma_feature)
-                    old_sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-                    old_sigma[ray_valid] = validsigma
-                    alpha, self.old_sigma_weight, bg_weight = raw2alpha(old_sigma, dists * self.distance_scale)
-                    del sigma_feature, validsigma, old_sigma, alpha, bg_weight, weights_sum, old_caster_weights, dummy_transforms
-                    torch.cuda.empty_cache()
+                #     validsigma = self.feature2density(sigma_feature)
+                #     old_sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
+                #     old_sigma[ray_valid] = validsigma
+                #     alpha, self.old_sigma_weight, bg_weight = raw2alpha(old_sigma, dists * self.distance_scale)
+                #     del sigma_feature, validsigma, old_sigma, alpha, bg_weight, weights_sum, old_caster_weights, dummy_transforms
+                #     torch.cuda.empty_cache()
 
 
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid)

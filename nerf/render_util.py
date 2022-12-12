@@ -404,13 +404,13 @@ def euler_to_matrix(angle = None, translate = None):
     if translate is not None:
         mat[:3, 3] = translate
     if angle is not None:
-        mat = p3d_transforms.euler_angles_to_matrix(angle[...].permute(1,0), convention="XYZ")
-        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1)], dim=0)
-        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1).t()], dim=0)
-        print(mat.shape)
-        print(mat[...,0])
-        exit()
-        return 
+        # mat = p3d_transforms.euler_angles_to_matrix(angle[...].permute(1,0), convention="XYZ")
+        # mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1)], dim=0)
+        # mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1).t()], dim=0)
+        # print(mat.shape)
+        # print(mat[...,0])
+        # exit()
+        # return 
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
         cx, cy, cz = torch.cos(torch.deg2rad(angle))
 
@@ -554,7 +554,7 @@ class Joint():
             return  input.to(device)
 
     def matrix_to_euler_pos(self, matrix):
-        return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
+        # return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
@@ -810,11 +810,24 @@ class Joint():
             res.extend(c.get_listed_rotations(type=type))
         return torch.stack(res, dim=0)
 
+    def refresh(self):
+        self.apply_transform(self.myeye(4), only_rotation=False)
+        for c in self.children:
+            c.refresh()
+        
+
     def get_listed_transforms(self):
         res = [self.__get_pose_mat()]
         for c in self.children:
             res.extend(c.get_listed_transforms())
         return torch.stack(res, dim=0)
+
+    def get_listed_global_transforms(self):
+        res = [self.global_transform()]
+        for c in self.children:
+            res.extend(c.get_listed_global_transforms())
+        return torch.stack(res, dim=0)
+
     def get_listed_transforms_initial(self):
         res = [self.initial_transform]
         for c in self.children:
