@@ -527,6 +527,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
             pCaster_origin = MLPCaster(len(joints), device, args = args)
         # pCaster_origin = MLPCaster_tcnn(len(joints), device)
         # pCaster_origin = MLPCaster_net(len(joints), device)
+    elif args.caster == "map":
+        pCaster_origin = MapCaster(num_animFrames, device, args=args)
     else:
         try:
             x = 1 / 0
@@ -611,9 +613,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         ]
 
         params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        if args.free_opt2:
-            pass
-            # params.append({'name':'after_interface_layer','params': list(pCaster_origin.after_interface.parameters()), 'weight_decay': wd, 'lr': args.lr_mlp})
+        if args.free_opt1:
+            params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         if not args.use_gt_skeleton:
             params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam( params, betas=(0.9,0.99))

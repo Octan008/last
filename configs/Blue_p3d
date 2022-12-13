@@ -7,7 +7,7 @@ add_timestamp = 1
 local_batching = 0
 JOKE = 0
 
-caster = sh
+caster = mlp
 use_gt_skeleton = 1
 
 pose_type = euler

@@ -651,9 +651,6 @@ class Joint():
         return torch.stack(res, dim=0)
 
     def para_rotations_to_transforms_fast(self, poses, type="quaternion"):
-        # print(poses.shape, type)
-        # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)
-        # return torch.bmm(poses, self.precomp_bindinvs)
         translates = poses[...,3:]
         poses = poses[...,:3]
 
@@ -778,11 +775,11 @@ class Joint():
             res.extend(c.get_listed_positions())
         return torch.stack(res, dim=0)
 
-    def get_listed_positions_first(self):
-        res = [self.first_pos]
-        for c in self.children:
-            res.extend(c.get_listed_positions())
-        return torch.stack(res, dim=0)
+    # def get_listed_positions_first(self):
+    #     res = [self.first_pos]
+    #     for c in self.children:
+    #         res.extend(c.get_listed_positions())
+    #     return torch.stack(res, dim=0)
 
     def get_listed_names(self):
         res=[self.name]

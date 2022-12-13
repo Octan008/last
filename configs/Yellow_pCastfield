@@ -1,14 +1,13 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Red_pCastField
+expname =  Yellow_pCastfield
 #basedir = ./refreshlog
 basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
-caster = sh
-use_gt_skeleton = 0
-free_opt4 = 1
+caster = mlp
+use_gt_skeleton = 1
 
 pose_type = euler
 

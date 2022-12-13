@@ -322,11 +322,6 @@ class MapCaster(CasterBase):
 
 
 
-        # return bwf.permute(1,0)
-
-
-
-
 class BWCaster(CasterBase):
     def __init__(self, dim, gridSize, device):
         super().__init__()
@@ -504,7 +499,7 @@ class shCaster(CasterBase):
         if self.use_distweight:
             exit()
         else:
-            weights = self.get_SH_vals(xyz_sampled.view(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
+            weights = self.get_SH_vals(xyz_sampled.view(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions())
 
         if torch.isnan(weights).any() or torch.isinf(weights).any():
             raise ValueError("justaftergetweights"+"nan or inf in weights")

@@ -1,8 +1,8 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
 expname =  Green_integrated
-#basedir = ./refreshlog
-basedir = ./log_trash
+basedir = ./refreshlog
+#basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
@@ -37,7 +37,7 @@ update_AlphaMask_list = [2000,4000]
 
 N_vis = 2
 vis_every = 4000
-step_ratio = 16
+step_ratio = 2
 #vis__every
 
 render_test = 1

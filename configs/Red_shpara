@@ -1,13 +1,15 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Yellow_shpara
+expname =  Red_shpara
 #basedir = ./refreshlog
 basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
-caster = mlp
-use_gt_skeleton = 1
+caster = sh
+use_gt_skeleton = 0
+free_opt4 = 1
+JOKE = 1
 
 pose_type = euler
 
