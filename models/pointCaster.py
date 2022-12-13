@@ -201,17 +201,11 @@ class MLPCaster(CasterBase):
 
 class MLPCaster_integrate(MLPCaster):
     def __init__(self, dim, device, args = None):
-        super().__init__(args = args)
+        super().__init__(dim, device, args = args)
         encoding = "frequency"
-        # encoding_dir="sphere_harmonics"
         self.num_layers=2
         self.hidden_dim=64
-        # geo_feat_dim=15
-        # num_layers_color=3
-        # hidden_dim_color=64
         self.bound=1.0
-        # bound /= 4.0
-        # hidden_dim /= 4
         self.hidden_dim = int(self.hidden_dim)
 
         # sigma network
@@ -256,10 +250,10 @@ class MLPCaster_integrate(MLPCaster):
 
             # res.append(sigma)
         res = torch.stack(res, dim=0)#j,n,3
-        res = res.permute(1,0,2).contiguous().view(-1, self.after_interface_dim*self.j_dim)
-        res = self.after_layer(res)
+        res = res.permute(1,0,2).contiguous().view(-1, self.after_interface_dim*self.j_dim)#n,j,3->n,j*3
+        res = self.after_layer(res)#n,j*3->n,j
 
-        return torch.stack(res, dim=0)
+        return F.relu(res.permute(1,0))
 
 
 class MapCaster(CasterBase):

@@ -743,13 +743,14 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     total_loss += tvloss  + linearloss 
 
                 if args.caster == "sh" and not args.use_gt_skeleton:
-                    # print("itr", itr)
-                    bg_alpha = tensorf.old_bg_alpha
-                    sigma = clip_weight(tensorf.old_sigma_weight, thresh = 1e-3)
+                    pass
+                    # # print("itr", itr)
+                    # bg_alpha = tensorf.old_bg_alpha
+                    # sigma = clip_weight(tensorf.old_sigma_weight, thresh = 1e-3)
                     
-                    rest_loss = torch.mean((bg_alpha - sigma) ** 2) * 1000000
-                    loss *= 0.0001
-                    total_loss += rest_loss
+                    # rest_loss = torch.mean((bg_alpha - sigma) ** 2) * 1000000
+                    # loss *= 0.0001
+                    # total_loss += rest_loss
 
                 # loss
                 total_loss += loss

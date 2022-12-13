@@ -7,7 +7,7 @@ add_timestamp = 1
 local_batching = 0
 
 caster = sh
-use_gt_skeleton = 1
+use_gt_skeleton = 0
 free_opt4 = 1
 
 pose_type = euler

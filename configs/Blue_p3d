@@ -1,11 +1,11 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
 expname =  Blue_p3d
-#basedir = ./refreshlog
-basedir = ./log_trash
+basedir = ./refreshlog
+#basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
-JOKE = 1
+JOKE = 0
 
 caster = sh
 use_gt_skeleton = 1
