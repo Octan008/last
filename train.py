@@ -604,19 +604,19 @@ def skeleton_optim(rank, args, n_gpu = 1):
         optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
     elif args.caster == "mlp":
-        wd = 1e-4
+        wd = 1e-6
         params =  [
-            {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': wd, 'lr': args.lr_mlp},
+            {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
             {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
         ]
-        if args.free_opt1:
-            params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': args.lr_mlp})
-        elif args.free_opt2:
-            params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': args.lr_mlp})
-            params.append({'name':'after_interface_layer','params': list(pCaster_origin.after_interface.parameters()), 'weight_decay': wd, 'lr': args.lr_mlp})
+
+        params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        if args.free_opt2:
+            pass
+            # params.append({'name':'after_interface_layer','params': list(pCaster_origin.after_interface.parameters()), 'weight_decay': wd, 'lr': args.lr_mlp})
         if not args.use_gt_skeleton:
             params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
-        optimizer = torch.optim.Adam( params, betas=(0.9,0.99) , eps=1e-15)
+        optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0

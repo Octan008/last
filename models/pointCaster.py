@@ -113,8 +113,7 @@ class MLPCaster(CasterBase):
     def __init__(self, dim, device, args = None):
         super().__init__(args = args)
         encoding="hashgrid"
-        if self.args.free_opt1:
-            encoding = "frequency"
+        encoding = "frequency"
         # encoding_dir="sphere_harmonics"
         self.num_layers=2
         self.hidden_dim=64
@@ -132,10 +131,9 @@ class MLPCaster(CasterBase):
         
         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
         
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires = 5)
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound)
         self.interface_layer = None
-        if self.args.free_opt1:
-            self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
+        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
 
         self.weight_nets = []
@@ -159,8 +157,7 @@ class MLPCaster(CasterBase):
         res = []
         for i in range(len(self.weight_nets)):
             tmp = self.encoder(x[i], bound=self.bound)
-            if self.args.free_opt1:
-                tmp = self.interface_layer(tmp)
+            tmp = self.interface_layer(tmp)
             h = self.weight_nets[i](tmp)
 
             sigma = F.relu(h[..., 0])
