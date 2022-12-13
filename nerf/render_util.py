@@ -404,10 +404,10 @@ def euler_to_matrix(angle = None, translate = None):
     if translate is not None:
         mat[:3, 3] = translate
     if angle is not None:
-        mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle), convention="XYZ")
-        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0)], dim=0)
-        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1)], dim=1)
-        return mat
+        # mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle), convention="XYZ")
+        # mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0)], dim=0)
+        # mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1)], dim=1)
+        # return mat
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
         cx, cy, cz = torch.cos(torch.deg2rad(angle))
 
@@ -421,7 +421,7 @@ def euler_to_matrix(angle = None, translate = None):
             [0.0,0.0,0.0,1.0], device=angle.device
         ).unsqueeze(1)], dim=1)
 
-def euler_to_matrix_batch(angle=None, top_batching=False):
+def euler_to_matrix_batch_new(angle=None, top_batching=False):
     if top_batching:
         mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle[...]), convention="XYZ")
         mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0).unsqueeze(0).repeat(angle.shape[0], 1, 1)], dim=1)
@@ -433,17 +433,19 @@ def euler_to_matrix_batch(angle=None, top_batching=False):
         mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(0).t().unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=-1)
         return mat.permute(1,2,0)
 
-def euler_to_matrix_batch_old(angle = None):
+def euler_to_matrix_batch(angle = None, top_batching=False):
     # mat = torch.eye(4, device=torch.device(my_torch_device))
     
     # if translate is not None:
     #     print(mat[:3, 3].shape, translate.shape)
     #     mat[:3, 3] = translate
+    if top_batching:
+        angle = angle.permute(1,0)
     
     if angle is not None:
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
         cx, cy, cz = torch.cos(torch.deg2rad(angle))
-        return torch.cat([
+        result = torch.cat([
         torch.stack([
             torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
             torch.stack([cx*sz+cz*sx*sy, cx*cz-sx*sy*sz,   -cy*sx],dim=0),
@@ -453,7 +455,10 @@ def euler_to_matrix_batch_old(angle = None):
         ], dim=0), torch.tensor(
             [0.0,0.0,0.0,1.0], device=angle.device
         ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[1])], dim=1)
-        # ).unsqueeze(1).unsqueeze(1).expand(-1,-1,angle.shape[1])], dim=1)
+
+        if top_batching:
+            result = result.permute(2,0,1)
+        return result
 
 
 def make_transform(angle=None, translate = None):
@@ -544,7 +549,7 @@ class Joint():
             return  input.to(device)
 
     def matrix_to_euler_pos(self, matrix):
-        return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
+        # return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
