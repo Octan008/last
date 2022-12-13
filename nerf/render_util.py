@@ -561,8 +561,26 @@ class Joint():
         theta1 = theta1 * 180 / np.pi
         theta2 = theta2 * 180 / np.pi
         theta3 = theta3 * 180 / np.pi # as euler
+        return torch.stack([theta1, theta2, theta3], dim=0)
 
+    def matrix_to_euler_pos_batch(self, matrix, top_batching=False):
+        # return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
+        if top_batching:
+            matrix = matrix.permute(1,2,0)
 
+        r11, r12, r13 = matrix[0,:3]
+        r21, r22, r23 = matrix[1,:3]
+        r31, r32, r33 = matrix[2,:3]
+        theta1 = torch.arctan(-r23 / r33)
+        theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
+        theta3 = torch.arctan(-r12 / r11)
+        # theta2 = torch.asin(-r31)
+
+        theta1 = theta1 * 180 / np.pi
+        theta2 = theta2 * 180 / np.pi
+        theta3 = theta3 * 180 / np.pi # as euler
+        if top_batching:
+            return torch.stack([theta1, theta2, theta3], dim=-1)
         return torch.stack([theta1, theta2, theta3], dim=0)
 
 

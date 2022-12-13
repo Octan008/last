@@ -484,7 +484,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
         skeleton.refresh()
         tfs = skeleton.get_listed_global_transforms()
         translates = tfs[...,:3, 3]
-        rotations = skeleton.matrix_to_euler_pos(tfs[...,:3,:3])
+        rotations = skeleton.matrix_to_euler_pos_batch(tfs[...,:3,:3], top_batching=True)
         para_six_pose =  torch.cat([rotations, translates], dim=-1)
         skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type="para_six", para_pose = para_six_pose)
     skeleton_dataset.to(device)
