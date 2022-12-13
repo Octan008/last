@@ -47,6 +47,8 @@ class CasterBase(nn.Module):
     def __init__(self, args = None):
         super().__init__()
         self.args = args
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
+        pass
     
     def save(self, path):
         kwargs = self.get_kwargs()
@@ -85,7 +87,7 @@ class DistCaster(CasterBase):
     def __init__(self):
         super().__init__()
 
-    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         self.skeleton.apply_precomputed_localtransorms()
 
@@ -165,7 +167,7 @@ class MLPCaster(CasterBase):
             res.append(sigma)
         return torch.stack(res, dim=0)
 
-    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # # 1115
@@ -299,15 +301,15 @@ class MapCaster(CasterBase):
         h = self.map_nets[i_frame](tmp)
         return h
 
-    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # # 1115
-        weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
+        transforms = self.compute_transforms(xyz_sampled.view(-1, 3), transforms, i_frame)
         self.weights = weights
         weights = torch.cat([weights, weights], dim=0)
         tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
-        tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+        tmp = torch.matmul(transforms, tmp.unsqueeze(-1)).squeeze()
         if(tmp.isnan().any() or tmp.isinf().any()):
             ValueError("tmp is nan")
         #debug
@@ -317,19 +319,13 @@ class MapCaster(CasterBase):
 
         return xyz_sampled, viewdirs
 
-    def compute_weights(self, xyz, transforms,  features=None, locs=None):
-        # return compute_weisghts(xyz, self.joints).to(torch.float32)
+    def compute_transforms(self, xyz, transforms,  i_frame, features=None, locs=None):
 
-       
-        # xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
-        # if self.args.use_indivInv:
-        #     invs = transforms
-        # else:
-        #     invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
-        # result = self.normalize_coord(result[:,:,:3])
-        features = self.density(xyz) #sample, 6
-        mats  = euler_to_matrix_batch2(features[:,:3].permute(1,0)) # 3, sample
+        map_features = self.density(xyz) #sample, 6
+        mats = euler_to_matrix_batch(map_features[:,:3], top_batching=True) # sample, 3, 3
+        mats[:,:3,3] = features[:,3:]
+        return mats
+
 
 
         # return bwf.permute(1,0)
@@ -379,7 +375,7 @@ class BWCaster(CasterBase):
 
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
         
-    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # # 1115
@@ -500,7 +496,7 @@ class shCaster(CasterBase):
         self.use_distweight = False
 
 
-    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         # return xyz_sampled, viewdirs
         # time_st = time.perf_counter()
         shape = xyz_sampled.shape

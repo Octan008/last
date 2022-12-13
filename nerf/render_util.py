@@ -424,8 +424,8 @@ def euler_to_matrix(angle = None, translate = None):
 def euler_to_matrix_batch(angle=None, top_batching=False):
     if top_batching:
         mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle[...]), convention="XYZ")
-        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0).unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=1)
-        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(0).t().unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=-1)
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0).unsqueeze(0).repeat(angle.shape[0], 1, 1)], dim=1)
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(0).t().unsqueeze(0).repeat(angle.shape[0], 1, 1)], dim=-1)
         return mat
     else:
         mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle[...].permute(1,0)), convention="XYZ")
@@ -661,7 +661,7 @@ class Joint():
         if type=="quaternion":
             animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
         elif type=="euler":
-            animations = euler_to_matrix_batch2(torch.transpose(poses, 0, 1))
+            animations = euler_to_matrix_batch(poses, top_batching=True)
         # # print(animations.shape, translates.shape, poses.shape)
         # print(animations[...,:3,:3] - tmp[...,:3,:3])
         # # print(animations[...,:3,3] - translates)
@@ -987,7 +987,7 @@ class Joint():
         if type=="quaternion":
             animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
         elif type=="euler":
-            animations = euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1)
+            animations = euler_to_matrix_batch(poses, top_batching=True)
         #[J, 4, 4]
         mats2 = self.myeye(4).repeat(self.precomp_num_joints, self.precomp_depth, 1, 1)
         # mats2 = self.myeye(4).expand(self.precomp_num_joints, self.precomp_depth, -1, -1)
