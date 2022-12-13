@@ -23,7 +23,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 
 n_iters = 300000
 #batch_size = 4096
-batch_size = 128
+batch_size = 512
 test_batch_size = 1024
 progress_refresh_rate = 1
 

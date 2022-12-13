@@ -936,7 +936,8 @@ class TensorBase(torch.nn.Module):
 
 
         alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
-        weight = weight * bg_alpha
+        if not self.data_preparation:
+            weight = weight * bg_alpha
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
 

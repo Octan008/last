@@ -603,7 +603,18 @@ def skeleton_optim(rank, args, n_gpu = 1):
     elif args.caster == "dist":
         optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
     elif args.caster == "mlp":
-        optimizer = torch.optim.Adam( [{'params': pCaster_origin.parameters(), 'lr': 1e-4}], betas=(0.9,0.99))
+        params =  [
+            {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': 1e-6, 'lr': 1e-4},
+            {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
+        ]
+        params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': 1e-6, 'lr':1e-4})
+        # params =  [
+        #     {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': 1e-6, 'lr': args.lr_mlp},
+        #     {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
+        # ]
+        # params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': 1e-6, 'lr': args.lr_mlp})
+        # optimizer = torch.optim.Adam( [{'params': pCaster_origin.parameters(), 'lr': 1e-4}], betas=(0.9,0.99))
+        optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0
@@ -679,8 +690,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         tensorf.set_render_flags()
         torch.cuda.empty_cache()
 
-        # idx = torch.randint(0, ray_per_img, size=[args.batch_size], device=device)
-        idx = torch.randint(0, ray_per_img, size=[4096], device=device)
+        idx = torch.randint(0, ray_per_img, size=[args.batch_size], device=device)
+        # idx = torch.randint(0, ray_per_img, size=[4096], device=device)
         rays_train = torch.index_select(allrays[itr+num_frames*rank_diff].to(device), 0, idx)
         rgb_train = torch.index_select(allrgbs[itr+num_frames*rank_diff].to(device), 0, idx)
         
@@ -700,6 +711,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
         with torch.cuda.amp.autocast(): 
+        # if True:
             rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                                     N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
             # exit("distman?")
@@ -798,10 +810,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
             del rgb_map, alphas_map, depth_map, weights, uncertainty, loss, total_loss, tvloss, linearloss
             if mix_precision:
                 scaler.step(optimizer) 
+                scaler.update() 
             else:
                 optimizer.step()
             
-            scaler.update() 
+            
 
 
 
@@ -871,36 +884,36 @@ def skeleton_optim(rank, args, n_gpu = 1):
             itr += 1
             # exit()
             
-        # exit("exit_before_save")
-        if rank == rank_criteria:
-            skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
-            sh_field.save(f'{logfolder}/{args.expname}_sh.th')
-            pCaster.save( f'{logfolder}/{args.expname}_pCaster.th')
-            tensorf.save(f'{logfolder}/{args.expname}.th')
-            
+    # exit("exit_before_save")
+    if rank == rank_criteria:
+        skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
+        sh_field.save(f'{logfolder}/{args.expname}_sh.th')
+        pCaster.save( f'{logfolder}/{args.expname}_pCaster.th')
+        tensorf.save(f'{logfolder}/{args.expname}.th')
+        
 
 
-        if args.render_train:
-            os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-            train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-            PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                    N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-            print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+    if args.render_train:
+        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
+        train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
+        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
-        if args.render_test:
-            os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
-                                    N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-            summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
-            print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+    if args.render_test:
+        os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
+        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
+        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
-        if args.render_path:
-            c2ws = test_dataset.render_path
-            # c2ws = test_dataset.poses
-            print('========>',c2ws.shape)
-            os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-            evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
-                                    N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+    if args.render_path:
+        c2ws = test_dataset.render_path
+        # c2ws = test_dataset.poses
+        print('========>',c2ws.shape)
+        os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
+        evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 
 

@@ -104,7 +104,7 @@ class DistCaster(CasterBase):
 
         return xyz_sampled, viewdirs    
 
-@torch.cuda.amp.autocast(enabled=True)
+@torch.cuda.amp.autocast(enabled=False)
 class MLPCaster(CasterBase):
     def __init__(self, dim, device):
         super().__init__()
@@ -115,27 +115,29 @@ class MLPCaster(CasterBase):
         geo_feat_dim=15
         num_layers_color=3
         hidden_dim_color=64
-        bound=1.0 / 16.0
+        bound=1.0
+        interface_dim = 32
 
         # sigma network
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim = 0
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.encoder, self.in_dim = get_encoder("frequency", desired_resolution=2048 * bound)
         self.bound = bound
-
+        self.interface_layer = nn.Linear(self.in_dim, interface_dim, bias=False).to(device)
         self.weight_nets = []
         for i in range(dim):
 
             self.weight_nets.append(
                 FFMLP(
-                    input_dim=self.in_dim, 
+                    input_dim=interface_dim, 
                     # input_dim=3, 
                     output_dim=1 + self.geo_feat_dim,
                     hidden_dim=self.hidden_dim,
                     num_layers=self.num_layers,
                 ).to(device)
             )
+        self.weight_nets = nn.ModuleList(self.weight_nets)
 
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x):
@@ -143,6 +145,7 @@ class MLPCaster(CasterBase):
         res = []
         for i in range(len(self.weight_nets)):
             tmp = self.encoder(x[i], bound=self.bound)
+            tmp = self.interface_layer(tmp)
             h = self.weight_nets[i](tmp)
             # h = self.weight_nets[i](x[i])
 
