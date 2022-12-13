@@ -199,119 +199,50 @@ class MLPCaster(CasterBase):
 
 class MLPCaster_integrate(MLPCaster):
     def __init__(self, dim, device, args = None):
-        super().__init__(dim, device, args = args)
-        encoding="frequency"
-
+        super().__init__(args = args)
+        encoding = "frequency"
         # encoding_dir="sphere_harmonics"
         self.num_layers=2
         self.hidden_dim=64
+        # geo_feat_dim=15
+        # num_layers_color=3
+        # hidden_dim_color=64
         self.bound=1.0
         # bound /= 4.0
         # hidden_dim /= 4
         self.hidden_dim = int(self.hidden_dim)
-        self.j_dim = dim
-        self.input_dim = 3 * self.j_dim
-        if_extra_dim = self.args.free_opt3
-        extra_dim = 0
-        if if_extra_dim:
-            extra_dim = 1
-        self.after_interface_dim = 16 - extra_dim
 
         # sigma network
-        self.geo_feat_dim = 0
+        self.geo_feat_dim = geo_feat_dim = 0
         self.interface_dim = 32
+        self.after_interface_dim = 3
+        self.j_dim = dim
         
         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
         
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires = 6, input_dim=self.input_dim)
-        # self.encoder, self.in_dim = get_encoder("hashgrid", desired_resolution=2048 * self.bound, multires = 5, input_dim=self.input_dim)
-
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound)
+        self.interface_layer = None
         self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
-        self.after_interface = nn.Linear(self.after_interface_dim, self.j_dim, bias=False).to(device)
-
-        self.encoder = self.encoder.to(device)
-
-        self.integrated_weight_net = FFMLP(
-                    input_dim=self.interface_dim, 
-                    output_dim=1*self.after_interface_dim + extra_dim + self.geo_feat_dim,
-                    hidden_dim=self.hidden_dim,
-                    num_layers=self.num_layers,
-                ).to(device)
-
-    @torch.cuda.amp.autocast(enabled=True)    
-    def density(self, x):
-        # x: [J, N, 3], in [-bound, bound]
-        x = x.permute(1,0,2)
-        # x: [N, J, 3], in [-bound, bound]
-        
-        tmp = x.view(-1, 3*self.j_dim)
-        tmp = self.encoder(tmp, bound=self.bound)
-        tmp = self.interface_layer(tmp)
-        h = self.integrated_weight_net(tmp)
-        h = self.after_interface(h)
-        sigma = F.relu(h)
-        if self.args.free_opt3:
-            self.bg_weights = sigma[...,-1].permute(1,0)
-            return sigma.permute(1,0)[...,:-1]
-        else:
-            return sigma.permute(1,0)
-
-
-class MLPCaster_integrate2(MLPCaster):
-    def __init__(self, dim, device, args = None):
-        super().__init__(dim, device, args = args)
-        encoding="frequency"
-
-        # encoding_dir="sphere_harmonics"
-        self.num_layers=2
-        self.hidden_dim=64
-        self.bound=1.0
-        # bound /= 4.0
-        # hidden_dim /= 4
-        self.hidden_dim = int(self.hidden_dim)
-        self.j_dim = dim
-        self.input_dim = 3
-        if_extra_dim = self.args.free_opt3
-        extra_dim = 0
-        if if_extra_dim:
-            extra_dim = 1
-        self.after_interface_dim = 3 * self.j_dim
-
-        # sigma network
-        self.geo_feat_dim = 0
-        self.interface_dim = 32
-        
-        # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
-        
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires = 6, input_dim=self.input_dim)
-        # self.encoder, self.in_dim = get_encoder("hashgrid", desired_resolution=2048 * self.bound, multires = 5, input_dim=self.input_dim)
-
-        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
-        self.after_interface = nn.Linear(self.after_interface_dim, self.j_dim+extra_dim, bias=False).to(device)
-
+        self.after_layer = nn.Linear(self.after_interface_dim*self.j_dim, self.j_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
 
         weight_nets = []
-        for i in range(dim):
+        for i in range(self.j_dim):
 
             weight_nets.append(
                 FFMLP(
                     # input_dim=self.in_dim, 
                     input_dim=self.interface_dim, 
                     # input_dim=3, 
-                    output_dim=1,
+                    output_dim=self.after_interface_dim,
                     hidden_dim=self.hidden_dim,
                     num_layers=self.num_layers,
                 ).to(device)
             )
         self.weight_nets = nn.ModuleList(weight_nets)
 
-    @torch.cuda.amp.autocast(enabled=True)    
+    @torch.cuda.amp.autocast(enabled=True)
     def density(self, x):
-        # x: [J, N, 3], in [-bound, bound]
-        # x = x.permute(1,0,2)
-        # # x: [N, J, 3], in [-bound, bound]
-        
         # x: [J, N, 3], in [-bound, bound]
         res = []
         for i in range(len(self.weight_nets)):
@@ -319,79 +250,90 @@ class MLPCaster_integrate2(MLPCaster):
             tmp = self.interface_layer(tmp)
             h = self.weight_nets[i](tmp)
             res.append(h)
-        # J, N, 3 :res
-        res = torch.stack(res, dim=0)
-        # res = res.permute(1,0,2).contiguous().view(-1, self.j_dim*3)
-        # res = self.after_interface(res)
-        # return F.relu(res).permute(1,0)
-        return F.relu(res).squeeze()
+            # sigma = F.relu(h[..., 0])
+
+            # res.append(sigma)
+        res = torch.stack(res, dim=0)#j,n,3
+        res = res.permute(1,0,2).contiguous().view(-1, self.after_interface_dim*self.j_dim)
+        res = self.after_layer(res)
+
+        return torch.stack(res, dim=0)
 
 
-
-class MLPCaster_net(MLPCaster):
-    def __init__(self, dim, device):
-        super().__init__(dim, device)
-        encoding="hashgrid"
-        encoding_dir="sphere_harmonics"
-        num_layers=2
-        hidden_dim=64
-        geo_feat_dim=15
-        num_layers_color=3
-        hidden_dim_color=64
-        bound=1.0
-        # bound /= 4.0
-        # hidden_dim /= 4
-        hidden_dim = int(hidden_dim)
+class MapCaster(CasterBase):
+    def __init__(self, num_frames, device, args = None):
+        super().__init__(args = args)
+        # encoding = "frequency"
+        encoding = "hashgrid"
+        self.num_layers=2
+        self.hidden_dim=64
+        self.bound=1.0
+        self.hidden_dim = int(self.hidden_dim)
+        self.num_frames = num_frames
 
         # sigma network
-        self.num_layers = num_layers
-        self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim = 0
-        self.bound = bound
-        # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048//4 * bound, base_resolution=4, num_levels=4)
-        # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.interface_dim = 32        
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound)
+        # self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
+        self.encoder = self.encoder.to(device)
 
-        # self.encoder = self.encoder.to(device)
-        self.encoder, self.in_dim = get_encoder("frequency", desired_resolution=2048 * bound, multires = 6)
-        self.in_dim_three = 3
+        self.map_nets = []
+        for i in range(self.num_frames):
 
-        self.weight_nets = []
-        for i in range(dim):
-            sigma_net = []
-            for l in range(num_layers):
-                if l == 0:
-                    # in_dim = self.in_dim_three
-                    in_dim = self.in_dim
-                else:
-                    in_dim = hidden_dim
-                
-                if l == num_layers - 1:
-                    out_dim = 1 + self.geo_feat_dim # 1 sigma + 15 SH features for color
-                else:
-                    out_dim = hidden_dim
-                
-                sigma_net.append(nn.Linear(in_dim, out_dim, bias=False))
-            self.weight_nets.append(
-                nn.ModuleList(sigma_net).to(device)
+            self.map_nets.append(
+                FFMLP(
+                    input_dim=self.in_dim, 
+                    # input_dim=self.interface_dim, 
+                    # input_dim=3, 
+                    output_dim=3+3,
+                    hidden_dim=self.hidden_dim,
+                    num_layers=self.num_layers,
+                ).to(device)
             )
+        self.map_nets = nn.ModuleList(self.map_nets)
 
     @torch.cuda.amp.autocast(enabled=True)
-    def density(self, x):
-        # x: [J, N, 3], in [-bound, bound]
-        res = []
-        for i in range(len(self.weight_nets)):
-            h = self.encoder(x[i], bound=self.bound)
-            # h = x[i]
+    def density(self, x, i_frame):
+        tmp = self.encoder(x, bound=self.bound)
+        h = self.map_nets[i_frame](tmp)
+        return h
 
-            for l in range(self.num_layers):
-                h = self.weight_nets[i][l](h)
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
+        shape = xyz_sampled.shape
+        xyz_slice = xyz_sampled.view(-1, 3).shape[0]
+        # # 1115
+        weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
+        self.weights = weights
+        weights = torch.cat([weights, weights], dim=0)
+        tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
+        tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+        if(tmp.isnan().any() or tmp.isinf().any()):
+            ValueError("tmp is nan")
+        #debug
+        xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
+        xyz_sampled = xyz_sampled.view(shape)
+        viewdirs = viewdirs.view(shape)
 
-                if l != self.num_layers - 1:
-                    h = F.relu(h, inplace=True)
+        return xyz_sampled, viewdirs
 
-            sigma = F.relu(h[..., 0])
-            res.append(sigma)
-        return torch.stack(res, dim=0)
+    def compute_weights(self, xyz, transforms,  features=None, locs=None):
+        # return compute_weisghts(xyz, self.joints).to(torch.float32)
+
+       
+        # xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
+        # if self.args.use_indivInv:
+        #     invs = transforms
+        # else:
+        #     invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
+        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
+        # result = self.normalize_coord(result[:,:,:3])
+        features = self.density(xyz) #sample, 6
+        mats  = euler_to_matrix_batch2(features[:,:3].permute(1,0)) # 3, sample
+
+
+        # return bwf.permute(1,0)
+
 
 
 
@@ -558,10 +500,6 @@ class shCaster(CasterBase):
         self.use_distweight = False
 
 
-        
-    # def set_usedistweight(self, use_distweight):
-    #     self.use_distweight = use_distweight
-
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid):
         # return xyz_sampled, viewdirs
         # time_st = time.perf_counter()
@@ -601,11 +539,6 @@ class shCaster(CasterBase):
     def set_allgrads(self, value):
         for param in self.sh_feats:
             param.requires_grad = value
-
-
-
-
-
     def get_SH_vals(self, xyz, features, invs, locs):
         xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
         # if torch.isnan(xyz).any() or torch.isinf(xyz).any():
@@ -654,73 +587,138 @@ class shCaster(CasterBase):
 
         return relative_distance#weights, (sample, j)(j, sample)では？
 
-class MLPCaster_tcnn(MLPCaster):
-    def __init__(self, dim, device):
-        super().__init__(dim, device)
-        encoding="hashgrid"
-        encoding_dir="sphere_harmonics"
-        num_layers=2
-        hidden_dim=64
-        geo_feat_dim=15
-        num_layers_color=3
-        hidden_dim_color=64
-        bound=1.0
-        # bound /= 4.0
-        # hidden_dim /= 4
-        hidden_dim = int(hidden_dim)
-        # sigma network
-        self.num_layers = num_layers
-        self.hidden_dim = hidden_dim
-        self.geo_feat_dim = geo_feat_dim = 0
-        self.bound = bound
+# class MLPCaster_tcnn(MLPCaster):
+#     def __init__(self, dim, device):
+#         super().__init__(dim, device)
+#         encoding="hashgrid"
+#         encoding_dir="sphere_harmonics"
+#         num_layers=2
+#         hidden_dim=64
+#         geo_feat_dim=15
+#         num_layers_color=3
+#         hidden_dim_color=64
+#         bound=1.0
+#         # bound /= 4.0
+#         # hidden_dim /= 4
+#         hidden_dim = int(hidden_dim)
+#         # sigma network
+#         self.num_layers = num_layers
+#         self.hidden_dim = hidden_dim
+#         self.geo_feat_dim = geo_feat_dim = 0
+#         self.bound = bound
         
 
-        n_levels = 16//4
-        bsae_res = 16
-        leveldim = 2
+#         n_levels = 16//4
+#         bsae_res = 16
+#         leveldim = 2
 
-        per_level_scale = np.exp2(np.log2(2048 * bound / bsae_res) / (n_levels - 1))
+#         per_level_scale = np.exp2(np.log2(2048 * bound / bsae_res) / (n_levels - 1))
 
-        self.encoder = tcnn.Encoding(
-            n_input_dims=3,
-            encoding_config={
-                "otype": "HashGrid",
-                "n_levels": n_levels,
-                "n_features_per_level": leveldim,
-                "log2_hashmap_size": 19,
-                "base_resolution": bsae_res,
-                "per_level_scale": per_level_scale,
-            },
-        )
+#         self.encoder = tcnn.Encoding(
+#             n_input_dims=3,
+#             encoding_config={
+#                 "otype": "HashGrid",
+#                 "n_levels": n_levels,
+#                 "n_features_per_level": leveldim,
+#                 "log2_hashmap_size": 19,
+#                 "base_resolution": bsae_res,
+#                 "per_level_scale": per_level_scale,
+#             },
+#         )
 
-        self.weight_nets = []
-        for i in range(dim):
+#         self.weight_nets = []
+#         for i in range(dim):
 
-            self.weight_nets.append(
-                tcnn.Network(
-                n_input_dims=leveldim*n_levels,
-                n_output_dims=1 + self.geo_feat_dim,
-                network_config={
-                    "otype": "FullyFusedMLP",
-                    "activation": "ReLU",
-                    "output_activation": "None",
-                    "n_neurons": hidden_dim,
-                    "n_hidden_layers": num_layers - 1,
-                },
-                ).to(device)
-            )
+#             self.weight_nets.append(
+#                 tcnn.Network(
+#                 n_input_dims=leveldim*n_levels,
+#                 n_output_dims=1 + self.geo_feat_dim,
+#                 network_config={
+#                     "otype": "FullyFusedMLP",
+#                     "activation": "ReLU",
+#                     "output_activation": "None",
+#                     "n_neurons": hidden_dim,
+#                     "n_hidden_layers": num_layers - 1,
+#                 },
+#                 ).to(device)
+#             )
 
-    @torch.cuda.amp.autocast(enabled=True)
-    def density(self, x):
-        # x: [J, N, 3], in [-bound, bound]
-        res = []
-        x = (x + self.bound) / (2 * self.bound) # to [0, 1]
-        for i in range(len(self.weight_nets)):
-            # sigma
+#     @torch.cuda.amp.autocast(enabled=True)
+#     def density(self, x):
+#         # x: [J, N, 3], in [-bound, bound]
+#         res = []
+#         x = (x + self.bound) / (2 * self.bound) # to [0, 1]
+#         for i in range(len(self.weight_nets)):
+#             # sigma
             
-            tmp = self.encoder(x[i])
-            h = self.weight_nets[i](tmp)
-            sigma = F.relu(h[..., 0])
-            res.append(sigma)
-        return torch.stack(res, dim=0)
+#             tmp = self.encoder(x[i])
+#             h = self.weight_nets[i](tmp)
+#             sigma = F.relu(h[..., 0])
+#             res.append(sigma)
+#         return torch.stack(res, dim=0)
 
+
+# class MLPCaster_net(MLPCaster):
+#     def __init__(self, dim, device):
+#         super().__init__(dim, device)
+#         encoding="hashgrid"
+#         encoding_dir="sphere_harmonics"
+#         num_layers=2
+#         hidden_dim=64
+#         geo_feat_dim=15
+#         num_layers_color=3
+#         hidden_dim_color=64
+#         bound=1.0
+#         # bound /= 4.0
+#         # hidden_dim /= 4
+#         hidden_dim = int(hidden_dim)
+
+#         # sigma network
+#         self.num_layers = num_layers
+#         self.hidden_dim = hidden_dim
+#         self.geo_feat_dim = geo_feat_dim = 0
+#         self.bound = bound
+#         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048//4 * bound, base_resolution=4, num_levels=4)
+#         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+
+#         # self.encoder = self.encoder.to(device)
+#         self.encoder, self.in_dim = get_encoder("frequency", desired_resolution=2048 * bound, multires = 6)
+#         self.in_dim_three = 3
+
+#         self.weight_nets = []
+#         for i in range(dim):
+#             sigma_net = []
+#             for l in range(num_layers):
+#                 if l == 0:
+#                     # in_dim = self.in_dim_three
+#                     in_dim = self.in_dim
+#                 else:
+#                     in_dim = hidden_dim
+                
+#                 if l == num_layers - 1:
+#                     out_dim = 1 + self.geo_feat_dim # 1 sigma + 15 SH features for color
+#                 else:
+#                     out_dim = hidden_dim
+                
+#                 sigma_net.append(nn.Linear(in_dim, out_dim, bias=False))
+#             self.weight_nets.append(
+#                 nn.ModuleList(sigma_net).to(device)
+#             )
+
+#     @torch.cuda.amp.autocast(enabled=True)
+#     def density(self, x):
+#         # x: [J, N, 3], in [-bound, bound]
+#         res = []
+#         for i in range(len(self.weight_nets)):
+#             h = self.encoder(x[i], bound=self.bound)
+#             # h = x[i]
+
+#             for l in range(self.num_layers):
+#                 h = self.weight_nets[i][l](h)
+
+#                 if l != self.num_layers - 1:
+#                     h = F.relu(h, inplace=True)
+
+#             sigma = F.relu(h[..., 0])
+#             res.append(sigma)
+#         return torch.stack(res, dim=0)

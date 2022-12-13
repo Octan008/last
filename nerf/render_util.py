@@ -404,13 +404,10 @@ def euler_to_matrix(angle = None, translate = None):
     if translate is not None:
         mat[:3, 3] = translate
     if angle is not None:
-        # mat = p3d_transforms.euler_angles_to_matrix(angle[...].permute(1,0), convention="XYZ")
-        # mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1)], dim=0)
-        # mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1).t()], dim=0)
-        # print(mat.shape)
-        # print(mat[...,0])
-        # exit()
-        # return 
+        mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle), convention="XYZ")
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0)], dim=0)
+        mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(1)], dim=1)
+        return mat
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
         cx, cy, cz = torch.cos(torch.deg2rad(angle))
 
@@ -423,6 +420,7 @@ def euler_to_matrix(angle = None, translate = None):
         ], dim=0), torch.tensor(
             [0.0,0.0,0.0,1.0], device=angle.device
         ).unsqueeze(1)], dim=1)
+
 def euler_to_matrix_batch2(angle=None):
         
     if angle is not None:
@@ -441,18 +439,6 @@ def euler_to_matrix_batch(angle = None):
     if angle is not None:
         sx, sy, sz = torch.sin(torch.deg2rad(angle))
         cx, cy, cz = torch.cos(torch.deg2rad(angle))
-        # print(torch.stack([cy*cz,  -cy*sz,   sy],dim=0).shape)
-        # print(torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1]).shape)
-        # print(torch.stack([
-        #     torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
-        #     torch.stack([cx*sz+cz*sx*sy, cx*cz-sx*sy*sz,   -cy*sx],dim=0),
-        #     torch.stack([sx*sz-cx*cz*sy,   cz*sx+cx*sy*sz, cx*cy],dim=0),
-        #     torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).repeat(1, angle.shape[1])
-        # ], dim=0).shape)
-        # print(torch.tensor(
-        #     [0.0,0.0,0.0,1.0], device=angle.device
-        # ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[1]).shape)
-        # exit("fff")
         return torch.cat([
         torch.stack([
             torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
@@ -554,7 +540,7 @@ class Joint():
             return  input.to(device)
 
     def matrix_to_euler_pos(self, matrix):
-        # return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
+        return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
@@ -656,6 +642,7 @@ class Joint():
         
         for c in self.children:
             res.extend(c.para_rotations_to_transforms(poses, type=type))
+        self.precomp_forward_global_transforms = torch.stack(res, dim=0)
 
         return torch.stack(res, dim=0)
 
@@ -681,7 +668,11 @@ class Joint():
         return torch.bmm(animations, self.precomp_bindinvs)
 
 
-    
+    def get_listed_precomp_global_transforms(self):
+        tmp_precomp = [self.precomp_forward_global_transform]
+        for c in self.children:
+            tmp_precomp.extend(c.get_listed_precomp_global_transforms())
+        return tmp_precomp
 
     def rotations_to_transforms(self, poses, parent=None, type="euler"):
         # etm_start = time.perf_counter()
@@ -702,9 +693,10 @@ class Joint():
             t = torch.matmul(parent, self.local_transform())
         else:
             t = torch.matmul(self.parent_transform, self.local_transform())
-        self.precomp_forward_global_transform = torch.matmul(t, self.bind_inv)
+        self.precomp_forward_global_transform = t
 
-        res = [self.precomp_forward_global_transform]
+        res = [torch.matmul(t, self.bind_inv)]
+
         # if True or self.name in ['root', 'Sharkthroat', 'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         # if self.name in ['Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
         #     res = [self.myeye(4)]
@@ -716,6 +708,7 @@ class Joint():
         if parent is not None:
             return res
         else:
+            self.precomp_forward_global_transforms = torch.stack(self.get_listed_precomp_global_transforms(), dim=0)
             return torch.stack(res, dim=0)
 
     def __get_pose_mat(self):

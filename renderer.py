@@ -91,6 +91,7 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
                 gt_skeleton_pose = test_dataset.frame_skeleton_pose[idxs[idx]]
                 if args.free_opt4:
                     tensorf.skeleton.rotations_to_transforms_fast(gt_skeleton_pose, type = args.pose_type)
+                    # tensorf.skeleton.rotations_to_transforms(gt_skeleton_pose, type = args.pose_type)
                     tfs = tensorf.skeleton.precomp_forward_global_transforms
                     # print(tfs.shape)
                     translates = tfs[...,:3, 3]
