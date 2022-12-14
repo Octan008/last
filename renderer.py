@@ -96,7 +96,8 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
                     # print(tfs.shape)
                     translates = tfs[...,:3, 3]
       
-                    rotations = tensorf.skeleton.matrix_to_euler_pos(tfs[...,:3,:3])
+                    # rotations = tensorf.skeleton.matrix_to_euler_pos(tfs[...,:3,:3])
+                    rotations = tensorf.skeleton.matrix_to_euler_pos_batch(tfs[...,:3,:3], top_batching = True)
                     gt_skeleton_pose = torch.cat([rotations, translates], dim=-1)
                     # gt_skeleton_pose = tfs
                 skeleton_props = {"frame_pose": gt_skeleton_pose}

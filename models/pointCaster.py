@@ -499,7 +499,11 @@ class shCaster(CasterBase):
         if self.use_distweight:
             exit()
         else:
-            weights = self.get_SH_vals(xyz_sampled.view(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions())
+            # a = self.skeleton.get_listed_positions(use_cached=True)[...,:3]
+            # b = self.skeleton.get_listed_positions()
+            # print(a.shape, b.shape)
+            # exit()
+            weights = self.get_SH_vals(xyz_sampled.view(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions(use_cached=True)[...,:3])
 
         if torch.isnan(weights).any() or torch.isinf(weights).any():
             raise ValueError("justaftergetweights"+"nan or inf in weights")

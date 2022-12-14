@@ -665,6 +665,7 @@ class TensorBase(torch.nn.Module):
                 else:
                     if self.args.free_opt4:
                         transforms = self.skeleton.para_rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
+                        # transforms = self.skeleton.para_rotations_to_transforms(self.frame_pose, type=self.posetype)
                     else:
                         transforms = self.skeleton.rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
 

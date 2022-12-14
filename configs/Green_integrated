@@ -1,6 +1,6 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Green_integrated
+expname =  Green_integrated-2
 basedir = ./refreshlog
 #basedir = ./log_trash
 add_timestamp = 1

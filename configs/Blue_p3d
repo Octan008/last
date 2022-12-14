@@ -1,6 +1,6 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Blue_p3d
+expname =  Blue_p3d-2
 basedir = ./refreshlog
 #basedir = ./log_trash
 add_timestamp = 1
