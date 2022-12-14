@@ -297,6 +297,8 @@ class MapCaster(CasterBase):
         # self.interface_layer.weight.data.fill_(0.00)
         # self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
+        poses = torch.randn(self.num_frames, 20*2)
+        self.pose_params = nn.Parameter(poses, requires_grad=True)
 
         self.map_nets = []
         for i in range(self.num_frames):
