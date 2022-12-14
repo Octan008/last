@@ -13,6 +13,15 @@ from torchngp.ffmlp import FFMLP
 
 import tinycudann as tcnn
 
+class pose_vector(nn.Module):
+    def __init__(self, num_frames, num_joints, device, args = None):
+        super(pose_vector, self).__init__()
+        poses = torch.randn(num_frames, num_joints*2)
+        self.pose_params = nn.Parameter(poses, requires_grad=True).to(device)
+
+    def forward(self, i):
+        return self.pose_params[i]
+
 def torch_mlp_net(_in_dim, _out_dim, num_layers, hidden_dim, device):
     sigma_net = []
     for l in range(num_layers):
@@ -297,34 +306,32 @@ class MapCaster(CasterBase):
         # self.interface_layer.weight.data.fill_(0.00)
         # self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
-        poses = torch.randn(self.num_frames, 20*2)
-        self.pose_params = nn.Parameter(poses, requires_grad=True)
+        self.pose_params = pose_vector(num_frames, 20, device)
+
 
         self.map_nets = []
-        for i in range(self.num_frames):
-            self.interface_layer.append(nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device))
+        self.interface_layer = nn.Linear(self.in_dim+20*2, self.interface_dim, bias=False).to(device)
 
-            self.map_nets.append(
-                FFMLP(
-                    input_dim=self.interface_dim, 
-                    # input_dim=self.interface_dim, 
-                    # input_dim=3, 
-                    output_dim=3+3,
-                    hidden_dim=self.hidden_dim,
-                    num_layers=self.num_layers,
-                ).to(device)
-                # torch_mlp_net(self.interface_dim, 3+3, self.hidden_dim, self.num_layers, device).to(device)
-            )
-        self.map_nets = nn.ModuleList(self.map_nets)
-        self.interface_layer = nn.ModuleList(self.interface_layer)
+        self.map_nets = FFMLP(
+                input_dim=self.interface_dim, 
+                # input_dim=self.interface_dim, 
+                # input_dim=3, 
+                output_dim=3+3,
+                hidden_dim=self.hidden_dim,
+                num_layers=self.num_layers,
+            ).to(device)
+            # torch_mlp_net(self.interface_dim, 3+3, self.hidden_dim, self.num_layers, device).to(device)
+        # self.map_nets = nn.ModuleList(self.map_nets)
+        # self.interface_layer = nn.ModuleList(self.interface_layer)
         self.weights = None
 
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x, i_frame):
         tmp = self.encoder(x, bound=self.bound)
-        tmp = self.interface_layer[i_frame](tmp)
-        tmp = F.relu(tmp)
-        h = self.map_nets[i_frame](tmp)
+        tmp = torch.cat([tmp, self.pose_params(i_frame).unsqueeze(0).expand(tmp.shape[0], -1)], dim=-1)
+        tmp = self.interface_layer(tmp)
+        # tmp = F.relu(tmp)
+        h = self.map_nets(tmp)
         return h
 
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
@@ -350,7 +357,8 @@ class MapCaster(CasterBase):
         euler_scaling = 1
         trans_scaling = 1
         map_features = self.density(xyz, i_frame) #sample, 6
-        mats = euler_to_matrix_batch(map_features[:,:3]*euler_scaling, top_batching=True) # sample, 3, 3
+        # mats = euler_to_matrix_batch(map_features[:,:3]*euler_scaling, top_batching=True) # sample, 3, 3
+        mats = torch.eye(4).unsqueeze(0).expand(xyz.shape[0], -1, -1).to(xyz.device)
         mats[:,:3,3] = map_features[:,3:]*trans_scaling
         return mats
 

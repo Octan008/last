@@ -630,10 +630,10 @@ def skeleton_optim(rank, args, n_gpu = 1):
     elif args.caster == "map":
         wd = 1e-6
         params =  [
-            {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-1},
+            {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
             {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
         ]
-
+        params.append({'name':'pose_params','params': pCaster_origin.pose_params.parameters(), 'weight_decay': wd, 'lr':1e-4})
         params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         # if args.free_opt1:
         #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})

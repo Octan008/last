@@ -9,7 +9,7 @@ local_batching = 0
 caster = map
 use_gt_skeleton = 1
 free_opt2 = 1
-JOKE = 0
+JOKE = 1
 
 pose_type = euler
 
