@@ -626,6 +626,20 @@ def skeleton_optim(rank, args, n_gpu = 1):
         if not args.use_gt_skeleton:
             params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
+
+    elif args.caster == "map":
+        wd = 1e-6
+        params =  [
+            {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-1},
+            {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
+        ]
+
+        params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        # if args.free_opt1:
+        #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        # if not args.use_gt_skeleton:
+        #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
+        optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0
@@ -682,6 +696,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
     
     # tensorf.use_indivInv = indivInv
     # print(skeleton.get_listed_rotations())
+    # if args.free_opt2:
+    #     pass
     for iteration in pbar:
         # # JOKE skeleton_optim
         if args.JOKE:
@@ -731,6 +747,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 rgb_train = torch.index_select(allrgbs[itr+num_frames*rank_diff].to(device), 0, idx)
             #rgb_map, alphas_map, depth_map, weights, uncertainty
             with torch.cuda.amp.autocast(): 
+                if args.free_opt2:
+                    tensorf.set_tmp_animframe_index(allanimframes[itr+num_frames*rank_diff])
                 rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
                 loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -833,17 +851,17 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
 
 
-                # if dist_test and itr == 1:
-                #     with torch.no_grad():
-                #         rays_train = allrays[itr+num_frames*rank_diff]
-                #         rgb_train = allrgbs[itr+num_frames*rank_diff]
-                #         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.test_batch_size,
-                #                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
-                #         rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
-                #         gt_rgb = (rgb_train.cpu().numpy() * 255).astype('uint8')
-                #         H,W = train_dataset.img_wh
-                #         rgb_map = np.concatenate((rgb_map.reshape(H,W,3), gt_rgb.reshape(H,W,3)), axis=1)
-                #         imageio.imwrite(f'{logfolder}/{args.expname}_dist_test{iteration:03d}.png', rgb_map)
+                if args.free_opt2 and itr == 1 and False:
+                    with torch.no_grad():
+                        rays_train = allrays[itr+num_frames*rank_diff]
+                        rgb_train = allrgbs[itr+num_frames*rank_diff]
+                        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.test_batch_size,
+                                        N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
+                        rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
+                        gt_rgb = (rgb_train.cpu().numpy() * 255).astype('uint8')
+                        H,W = train_dataset.img_wh
+                        rgb_map = np.concatenate((rgb_map.reshape(H,W,3), gt_rgb.reshape(H,W,3)), axis=1)
+                        imageio.imwrite(f'{logfolder}/{args.expname}_dist_test{iteration:03d}.png', rgb_map)
                 
                 #<Training> Test and Save the model.
                 with torch.no_grad():

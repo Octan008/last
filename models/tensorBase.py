@@ -268,6 +268,7 @@ class TensorBase(torch.nn.Module):
         self.use_ngprender =False
         self.use_indivInv = True
         self.args = None
+        self.tmp_animframe_index = None
         
 
             
@@ -609,6 +610,9 @@ class TensorBase(torch.nn.Module):
         self.frame_pose = pose
     def set_posetype(self, posetype):
         self.posetype = posetype
+        
+    def set_tmp_animframe_index(self, index):
+        self.tmp_animframe_index = index
 
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1, skeleton_props=None, is_render_only=False):
@@ -772,12 +776,13 @@ class TensorBase(torch.nn.Module):
                 #     torch.cuda.empty_cache()
 
 
-                xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid)
+                xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
                 # self.clamp_pts(self, xyz_sampled)
-                self.caster_weights = self.caster_origin.get_weights()
-                weights_sum = torch.sum(self.caster_weights, dim=1)
-                self.bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
-                
+                if not self.args.free_opt2:
+                    self.caster_weights = self.caster_origin.get_weights()
+                    weights_sum = torch.sum(self.caster_weights, dim=1)
+                    self.bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
+                    
 
             save_npz = False;
             if save_npz:
@@ -961,7 +966,8 @@ class TensorBase(torch.nn.Module):
 
         alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
         self.raw_sigma = weight
-        weight = weight * self.bg_alpha
+        if not self.args.free_opt2:
+            weight = weight * self.bg_alpha
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
 

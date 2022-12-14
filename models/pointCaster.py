@@ -13,6 +13,23 @@ from torchngp.ffmlp import FFMLP
 
 import tinycudann as tcnn
 
+def torch_mlp_net(_in_dim, _out_dim, num_layers, hidden_dim, device):
+    sigma_net = []
+    for l in range(num_layers):
+        if l == 0:
+            # in_dim = self.in_dim_three
+            in_dim = _in_dim
+        else:
+            in_dim = hidden_dim
+        
+        if l == num_layers - 1:
+            out_dim = _out_dim
+        else:
+            out_dim = hidden_dim
+        
+        sigma_net.append(nn.Linear(in_dim, out_dim, bias=False))
+    return nn.Sequential(*sigma_net)
+
 # from torchngp.nerf.renderer import NeRFRenderer
 
 # def tv_loss_func_grid(image, weight = 0.01):
@@ -129,11 +146,12 @@ class MLPCaster(CasterBase):
 
         # sigma network
         self.geo_feat_dim = geo_feat_dim = 0
-        self.interface_dim = 32
+        
         
         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
         
         self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound)
+        self.interface_dim = 32
         self.interface_layer = None
         self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
@@ -259,8 +277,8 @@ class MLPCaster_integrate(MLPCaster):
 class MapCaster(CasterBase):
     def __init__(self, num_frames, device, args = None):
         super().__init__(args = args)
-        # encoding = "frequency"
-        encoding = "hashgrid"
+        encoding = "frequency"
+        # encoding = "hashgrid"
         self.num_layers=2
         self.hidden_dim=64
         self.bound=1.0
@@ -270,28 +288,40 @@ class MapCaster(CasterBase):
         # sigma network
         self.geo_feat_dim = geo_feat_dim = 0
         self.interface_dim = 32        
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound)
+        self.interface_dim = 32
+        self.interface_layer = None
+        
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=6)
+        # self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
+        self.interface_layer = []
+        # self.interface_layer.weight.data.fill_(0.00)
         # self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
 
         self.map_nets = []
         for i in range(self.num_frames):
+            self.interface_layer.append(nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device))
 
             self.map_nets.append(
                 FFMLP(
-                    input_dim=self.in_dim, 
+                    input_dim=self.interface_dim, 
                     # input_dim=self.interface_dim, 
                     # input_dim=3, 
                     output_dim=3+3,
                     hidden_dim=self.hidden_dim,
                     num_layers=self.num_layers,
                 ).to(device)
+                # torch_mlp_net(self.interface_dim, 3+3, self.hidden_dim, self.num_layers, device).to(device)
             )
         self.map_nets = nn.ModuleList(self.map_nets)
+        self.interface_layer = nn.ModuleList(self.interface_layer)
+        self.weights = None
 
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x, i_frame):
         tmp = self.encoder(x, bound=self.bound)
+        tmp = self.interface_layer[i_frame](tmp)
+        tmp = F.relu(tmp)
         h = self.map_nets[i_frame](tmp)
         return h
 
@@ -300,10 +330,11 @@ class MapCaster(CasterBase):
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # # 1115
         transforms = self.compute_transforms(xyz_sampled.view(-1, 3), transforms, i_frame)
-        self.weights = weights
-        weights = torch.cat([weights, weights], dim=0)
+        # self.weights = weights
+        transforms = torch.cat([transforms, transforms], dim=0)
         tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
-        tmp = torch.matmul(transforms, tmp.unsqueeze(-1)).squeeze()
+        tmp = torch.cat([tmp, torch.ones(tmp.shape[0]).unsqueeze(-1).to(tmp.device)], dim=--1)#[N,4]
+        tmp = torch.matmul(transforms, tmp.unsqueeze(-1)).squeeze()[...,:3]
         if(tmp.isnan().any() or tmp.isinf().any()):
             ValueError("tmp is nan")
         #debug
@@ -314,10 +345,11 @@ class MapCaster(CasterBase):
         return xyz_sampled, viewdirs
 
     def compute_transforms(self, xyz, transforms,  i_frame, features=None, locs=None):
-
-        map_features = self.density(xyz) #sample, 6
-        mats = euler_to_matrix_batch(map_features[:,:3], top_batching=True) # sample, 3, 3
-        mats[:,:3,3] = features[:,3:]
+        euler_scaling = 1
+        trans_scaling = 1
+        map_features = self.density(xyz, i_frame) #sample, 6
+        mats = euler_to_matrix_batch(map_features[:,:3]*euler_scaling, top_batching=True) # sample, 3, 3
+        mats[:,:3,3] = map_features[:,3:]*trans_scaling
         return mats
 
 

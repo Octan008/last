@@ -77,6 +77,9 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
             print("animframe", test_dataset.all_animFrames[idxs[idx]], idxs[idx])
             # continue
             #tmp
+            if args.free_opt2:
+                tensorf.set_tmp_animframe_index(test_dataset.all_animFrames[idxs[idx]])
+                
             if skeleton_dataset is not None and not args.use_gt_skeleton:
                 scale = idx / 15.0
                 skeleton_props = {"frame_pose": skeleton_dataset(test_dataset.all_animFrames[idxs[idx]])}
