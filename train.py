@@ -536,7 +536,17 @@ def skeleton_optim(rank, args, n_gpu = 1):
         # pCaster_origin = MLPCaster_tcnn(len(joints), device)
         # pCaster_origin = MLPCaster_net(len(joints), device)
     elif args.caster == "map":
-        pCaster_origin = MapCaster(num_animFrames, device, args=args)
+        # if args.free_opt3:
+        if False:
+            reso_cur_2 = reso_cur
+            reso_cur_2[0] = reso_cur_2[0]//4
+            reso_cur_2[1] = reso_cur_2[1]//4
+            reso_cur_2[2] = reso_cur_2[2]//4
+            pCaster_origin = MapCaster_grid(len(joints), reso_cur_2 , device, num_animFrames,  args=args)
+        else:
+            pCaster_origin = MapCaster(num_animFrames, device, args=args)
+    elif  args.caster == "direct_map":
+        pCaster_origin = DirectMapCaster(num_animFrames, device, args=args)
     else:
         try:
             x = 1 / 0
@@ -628,18 +638,40 @@ def skeleton_optim(rank, args, n_gpu = 1):
         optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
 
     elif args.caster == "map":
-        wd = 1e-6
-        params =  [
-            {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
-            {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
-        ]
-        params.append({'name':'pose_params','params': pCaster_origin.pose_params.parameters(), 'weight_decay': wd, 'lr':1e-4})
-        params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        # if args.free_opt1:
-        #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        # if not args.use_gt_skeleton:
-        #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
-        optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
+        # if args.free_opt3:
+        if False:
+            wd = 1e-6
+            params =  pCaster_origin.get_optparam_groups()
+            optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
+        else:
+            wd = 1e-6
+            params =  [
+                {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
+                {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
+            ]
+            params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':1e-4})
+            params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+            # if args.free_opt1:
+            #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+            # if not args.use_gt_skeleton:
+            #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
+            optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
+    elif args.caster == "direct_map":
+            wd = 1e-6
+            lr = 1e-4
+            params =  [
+                {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
+                {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
+            ]
+            params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':lr})
+            params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': lr})
+            params.append({'name':'branch_w','params': list(pCaster_origin.branch_w.parameters()), 'weight_decay': wd, 'lr': lr})
+            params.append({'name':'branch_v','params': list(pCaster_origin.branch_v.parameters()), 'weight_decay': wd, 'lr': lr})
+            # if args.free_opt1:
+            #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+            # if not args.use_gt_skeleton:
+            #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
+            optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0
@@ -752,6 +784,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
                 loss = torch.mean((rgb_map - rgb_train) ** 2)
+
+                if torch.isnan(loss):
+                    raise ValueError("Loss is NaN")
 
                 total_loss = 0
                 tvloss = 0
