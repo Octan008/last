@@ -16,32 +16,16 @@ import tinycudann as tcnn
 from .rigidbody import * 
 
 class PoseVector(nn.Module):
-    def __init__(self, num_frames, num_joints, device, args = None):
+    def __init__(self, num_frames, num_dims, device, args = None):
         super().__init__()
         # poses = torch.randn(num_frames, num_joints*2)
         self.device = device
         # self.pose_params = nn.Parameter(poses, requires_grad=True)
-        self.pose_params = nn.Embedding(num_frames, num_joints*2)
+        self.pose_params = nn.Embedding(num_frames, num_dims)
 
     def forward(self, i):
         return self.pose_params(torch.tensor([i], device = self.device))
 
-def torch_mlp_net(_in_dim, _out_dim, num_layers, hidden_dim, device):
-    sigma_net = []
-    for l in range(num_layers):
-        if l == 0:
-            # in_dim = self.in_dim_three
-            in_dim = _in_dim
-        else:
-            in_dim = hidden_dim
-        
-        if l == num_layers - 1:
-            out_dim = _out_dim
-        else:
-            out_dim = hidden_dim
-        
-        sigma_net.append(nn.Linear(in_dim, out_dim, bias=False))
-    return nn.Sequential(*sigma_net)
 
 # from torchngp.nerf.renderer import NeRFRenderer
 
@@ -77,6 +61,25 @@ class CasterBase(nn.Module):
     def __init__(self, args = None):
         super().__init__()
         self.args = args
+
+    def torch_mlp_net(self, input_sequencial, _in_dim, _out_dim, num_layers, hidden_dim, device, if_use_bias = False):
+        
+        for l in range(num_layers):
+            if l == 0:
+                # in_dim = self.in_dim_three
+                in_dim = _in_dim
+            else:
+                in_dim = hidden_dim
+            
+            if l == num_layers - 1:
+                out_dim = _out_dim
+            else:
+                out_dim = hidden_dim
+            input_sequencial.add_module("main_linear_%d" % l, nn.Linear(in_dim, out_dim, bias=if_use_bias).to(device))
+            # sigma_net.append(nn.Linear(in_dim, out_dim, bias=if_use_bias))
+        # return nn.Sequential(*sigma_net)
+        # return *sigma_net
+
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         pass
     
@@ -306,18 +309,17 @@ class DirectMapCaster(CasterBase):
         self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=6)
 
         self.encoder = self.encoder
-        self.pose_dim = 20
+        self.pose_dim = 8
+
         self.pose_params = PoseVector(num_frames, self.pose_dim, device).to(device)
 
 
         self.map_nets = []
-        self.interface_layer = nn.Linear(self.in_dim+self.pose_dim*2, self.interface_dim, bias=False).to(device)
-        # distribution = 1e-1
-        # nn.init.uniform_(self.interface_layer.weight, -distribution, distribution)
-        self.branch_w = nn.Linear( self.trunk_dim, 3, bias=False).to(device)
-        # nn.init.uniform_(self.branch_w.weight, -distribution, distribution)
-        self.branch_v = nn.Linear( self.trunk_dim, 3, bias=False).to(device)
-        # nn.init.uniform_(self.branch_v.weight, -distribution, distribution)
+        self.interface_layer = nn.Linear(self.in_dim+self.pose_dim, self.interface_dim, bias=True).to(device)
+        self.map_nets = nn.Sequential().to(device)
+        self.map_nets.add_module('linear1', nn.Linear(self.interface_dim, self.trunk_dim, bias=True).to(device))
+        self.branch_w = nn.Linear( self.trunk_dim, 3, bias=True).to(device)
+        self.branch_v = nn.Linear( self.trunk_dim, 3, bias=True).to(device)
 
         # self.map_nets = FFMLP(
         #         input_dim=self.interface_dim, 
@@ -327,8 +329,7 @@ class DirectMapCaster(CasterBase):
         #         hidden_dim=self.hidden_dim,
         #         num_layers=self.num_layers,
         #     ).to(device)
-        # _in_dim = self.interface_dim
-        self.map_nets =   torch_mlp_net(self.interface_dim, self.trunk_dim, self.hidden_dim, self.num_layers, device).to(device)
+
         # self.map_nets = nn.ModuleList(self.map_nets)
         # self.interface_layer = nn.ModuleList(self.interface_layer)
         self.weights = None
@@ -345,45 +346,71 @@ class DirectMapCaster(CasterBase):
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x, i_frame):
         tmp = self.encoder(x, bound=self.bound)
+        # print("encoded", torch.max(tmp, dim=0).values-torch.min(tmp, dim=0).values)
         embed = self.pose_params(i_frame).expand(tmp.shape[0], -1)
         tmp = torch.cat([tmp, embed], dim=-1)
+        # print("embed", torch.max(tmp, dim=0).values-torch.min(tmp, dim=0).values)
         tmp = self.interface_layer(tmp)
-        tmp = F.relu(tmp)
+        # print("interface", torch.max(tmp, dim=0).values-torch.min(tmp, dim=0).values)
+        # tmp = F.relu(tmp)
         tunk = self.map_nets(tmp)
-        tunk = F.relu(tunk)
+        # print("tunk", torch.max(tunk, dim=0).values-torch.min(tunk, dim=0).values)
+        # tunk = F.relu(tunk)
         w = self.branch_w(tunk)
+        
         v = self.branch_v(tunk)
+        # print("v", torch.max(v, dim=0).values-torch.min(v, dim=0).values)
+        # print("w", torch.max(w, dim=0).values-torch.min(w, dim=0).values)
         return w, v
 
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # # 1115
-        transforms = self.compute_transforms(xyz_sampled.view(-1, 3), transforms, i_frame)
-        transforms = torch.cat([transforms, transforms], dim=0)
+        new_transforms = self.compute_transforms(xyz_sampled.view(-1, 3), None, i_frame)
+        # xyz_sampled = xyz_sampled.view(-1, 3)
+        # xyz_sampled = torch.cat([xyz_sampled, torch.ones(xyz_sampled.shape[0]).unsqueeze(-1).to(xyz_sampled.device)], dim=--1)#[N,4]
+        # xyz_sampled = torch.matmul(transforms, xyz_sampled.unsqueeze(-1)).squeeze()[...,:3]
+        # print(transforms.shape)
+        new_transforms = torch.cat([new_transforms, new_transforms], dim=0)
+        # print(transforms.shape)
+        # print(xyz_sampled.shape, viewdirs.shape)
 
         tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
+        # print(tmp.shape)
         tmp = torch.cat([tmp, torch.ones(tmp.shape[0]).unsqueeze(-1).to(tmp.device)], dim=--1)#[N,4]
+        # print(tmp.shape)
 
-        tmp = torch.matmul(transforms, tmp.unsqueeze(-1)).squeeze()[...,:3]
-        # if(tmp.isnan().any() or tmp.isinf().any()):
-        #     raise ValueError("tmp is nan")
-        #debug
+        tmp = torch.matmul(new_transforms, tmp.unsqueeze(-1)).squeeze()[...,:3]
+        # print(tmp.shape)
+
+        # # if(tmp.isnan().any() or tmp.isinf().any()):
+        # #     raise ValueError("tmp is nan")
+        # #debug
         xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
+        # xyz_sampled, __ = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
         xyz_sampled = xyz_sampled.view(shape)
         viewdirs = viewdirs.view(shape)
 
         return xyz_sampled, viewdirs
 
+    @torch.cuda.amp.autocast(enabled=True)
     def compute_transforms(self, xyz, transforms,  i_frame, features=None, locs=None):
         w, v = self.density(xyz, i_frame) #sample, 6
+        euler_scale = 1
+        trans_scale = 1
+        # w = (w+1) * euler_scale
+        # v = v * trans_scale
         eps = 1e-6
         theta  = torch.sum(w*w, axis=-1)
-        theta = torch.clamp(theta, eps).sqrt()
+        theta = torch.clamp(theta, min = eps).sqrt()
+        
 
         v = v/theta.unsqueeze(-1)
         w = w/theta.unsqueeze(-1)
-
+        # print(torch.max(w, dim=0), torch.min(w, dim=0))
+        # print(torch.max(v, dim=0), torch.min(v, dim=0))
+        # exit()
         screw_axis = torch.cat([w, v], axis=-1)
         transform = exp_se3(screw_axis.permute(1,0), theta).permute(2,0,1)
 
@@ -444,7 +471,7 @@ class MapCaster(CasterBase):
         # if i_frame == 0 or i_frame == 1:
         #     print(i_frame, self.pose_params(i_frame))
         tmp = self.encoder(x, bound=self.bound)
-        tmp = torch.cat([tmp, self.pose_params(i_frame).unsqueeze(0).expand(tmp.shape[0], -1)], dim=-1)
+        tmp = torch.cat([tmp, self.pose_params(i_frame).expand(tmp.shape[0], -1)], dim=-1)
         tmp = self.interface_layer(tmp)
         # tmp = F.relu(tmp)
         h = self.map_nets(tmp)

@@ -841,6 +841,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 if mix_precision:
                     scaler.scale(total_loss).backward()
                 else:
+                    # print(total_loss)
                     total_loss.backward()
                 
                 

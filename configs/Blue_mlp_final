@@ -1,14 +1,15 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Debug
-#basedir = ./refreshlog
-basedir = ./log_trash
+expname =  Blue_grad_directmap
+basedir = ./refreshlog
+#basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
 caster = map
 use_gt_skeleton = 1
 free_opt2 = 1
+#free_opt3 = 1
 JOKE = 0
 
 pose_type = euler

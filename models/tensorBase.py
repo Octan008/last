@@ -775,8 +775,9 @@ class TensorBase(torch.nn.Module):
                 #     del sigma_feature, validsigma, old_sigma, alpha, bg_weight, weights_sum, old_caster_weights, dummy_transforms
                 #     torch.cuda.empty_cache()
 
-
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+                # print("casting", xyz_sampled.grad_fn)
+                # exit()
                 # self.clamp_pts(self, xyz_sampled)
                 if not self.args.free_opt2:
                     self.caster_weights = self.caster_origin.get_weights()
@@ -959,6 +960,7 @@ class TensorBase(torch.nn.Module):
             # sigma[inside] = 0.2;
             if not self.data_preparation and save_npz:
                 save_npz["sigma"] = sigma.cpu().numpy()
+            # print("sigma", sigma.grad_fn)
             self.sigma = sigma
             # exit("amkingmasking")
 
@@ -970,6 +972,7 @@ class TensorBase(torch.nn.Module):
             weight = weight * self.bg_alpha
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
+        # print("app_mask", app_mask.shape, app_mask.sum())
 
         # Compute_alpha
         if app_mask.any():
@@ -979,6 +982,9 @@ class TensorBase(torch.nn.Module):
             # weight_slice =  weights.reshape(rgb.shape[0], -1, weights.shape[-1]).shape[1]//2
             # rgb[...,1:] = 0
             # rgb[...,0] = weights.reshape(rgb.shape[0], -1, weights.shape[-1])[:,:,2] * 1000
+            # print("feats", app_features.grad_fn, valid_rgbs.grad_fn, xyz_sampled.grad_fn, viewdirs.grad_fn)
+            # print("rgb", rgb.grad_fn)
+            # exit()
             
 
             
