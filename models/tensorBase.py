@@ -269,6 +269,8 @@ class TensorBase(torch.nn.Module):
         self.use_indivInv = True
         self.args = None
         self.tmp_animframe_index = None
+
+        self.forward_caster_mode = False
         
 
             
@@ -641,11 +643,26 @@ class TensorBase(torch.nn.Module):
             sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
             rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
 
-        
-        # for j in self.skeleton.get_children():
-        #     apply_animation(self.framepose, j)
-        # gt_skeleton_pose = self.skeleton.get_listed_rotations()
-        # self.skeleton.transformNet(gt_skeleton_pose)
+
+        shape = xyz_sampled.shape
+
+        if self.forward_caster_mode:
+            # box = self.get_grid_points([200,200,200]).to(self.device)
+            box = self.get_grid_points([2,2,2]).to(self.device)
+            box_shape = box.shape
+            # box = box.view(-1,3)
+            tmp_xyz_sampled = xyz_sampled
+            refference_table = xyz_sampled.view(-1,3).unsqueeze(1).expand(-1,box.view(-1,3).shape[0],-1) #N, bN, 3
+            xyz_sampled = box
+            # refference_table = refference_table - box.unsqueeze(0).expand(refference_table.shape[0],-1,-1) #N, bN, 3
+            # refference_table = torch.exp(-torch.norm(refference_table, dim=-1)) #N, bN
+            # effect_table, inds = torch.topk(refference_table, 3, dim=-1) #N, 3
+            # print(xyz_sampled.shape, box.shape, refference_table.shape, effect_table.shape, inds.shape)
+            # print(effect_table)
+            # print(inds)
+            # exit()
+
+
 
 
         #skeleton parsing -> transforms
@@ -676,43 +693,6 @@ class TensorBase(torch.nn.Module):
                 if torch.isnan(transforms ).any() or torch.isinf(transforms ).any():
                     raise ValueError("justaftergetweights"+"nan or inf in weights")
                     # print("not using indivInv")
-                # # print("using_opt_skeleton")
-                # # exit("not implemented")
-                # t1 = self.skeleton.rotations_to_invs(self.frame_pose, type=self.posetype)
-                # t2 = self.skeleton.rotations_to_transforms(self.frame_pose, type=self.posetype)
-
-                # print("t1 - invt2", torch.sum(torch.abs(t1 - affine_inverse_batch(t2))))
-                # print("下", torch.sum(torch.abs(t1)[:,3, :3]))
-                # print("下", torch.sum(torch.abs(t2)[:,3, :3]))
-                # print("下2", torch.sum(torch.abs(affine_inverse_batch(t2))[:,3, :3]))
-                # print("隅", torch.sum(torch.abs(t1)[:,3, 3]))
-                # print("隅", torch.sum(torch.abs(t2)[:,3, 3]))
-
-                # n_sample = xyz_sampled.reshape(-1,3).shape[0]
-                # print("reshape_check", torch.sum(torch.abs(t1 - t1.reshape(t1.shape[0], -1).reshape(-1, 4, 4))))
-                
-                # self.joints = listify_skeleton(self.skeleton)
-                # weights = compute_weights(xyz_sampled.reshape(-1,3), self.joints).to(torch.float32)
-                # weights_sum = weights.sum(dim=1)
-                # eps = 1e-7
-                # non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
-
-                # valid = ~non_valid
-                # valid_2 = weights_sum > eps
-
-                # weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
-
-                # tmp2 = torch.matmul(weights, t1.reshape(t1.shape[0], -1)).reshape(n_sample, 4, 4)
-
-                # tmp = torch.matmul(weights, t2.reshape(t2.shape[0], -1)).reshape(n_sample, 4, 4)
-                # tmp = affine_inverse_batch(tmp)
-                # #tmp : N, 4, 4
-                # # print(tmp.shape, tmp2.shape)
-                # print("tmp", torch.sum(torch.abs(tmp[valid_2][:,:3,3]))/n_sample)
-                # print("tmp2", torch.sum(torch.abs(tmp2[valid_2][:,:3,3]))/n_sample)
-                # print("tmp-tmp2", torch.sum(torch.abs((tmp[valid_2]-tmp2[valid_2]))[:,:3,3])/n_sample)
-                # print("tmp-tmp2", torch.min(torch.abs((tmp[valid_2]-tmp2[valid_2]))[:,:3,3], dim=0))
-
                 # exit("ff")
             else:
                 for j in self.skeleton.get_children():
@@ -732,7 +712,7 @@ class TensorBase(torch.nn.Module):
                 draw_mask = self.skeleton.draw_mask_all_cached(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
                 # draw_mask = self.skeleton.draw_mask_all(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
             # print("c", self.skeleton.get_listed_rotations())
-        shape = xyz_sampled.shape
+        
 
         # Point Casting
         if not self.data_preparation:
@@ -1031,3 +1011,20 @@ class TensorBase(torch.nn.Module):
 
         validsigma = self.feature2density(sigma_feature)
         return validsigma
+    
+    def get_grid_points(self, grid_sizes, box = None):
+        if box is None:
+            box = self.ray_aabb
+            gridsize = 200
+        # box_width = box[1] - box[0]
+        samples_x = torch.linspace(box[0][0], box[1][0], grid_sizes[0])
+        samples_y = torch.linspace(box[0][1], box[1][1], grid_sizes[1])
+        samples_z = torch.linspace(box[0][2], box[1][2], grid_sizes[2])
+        box = torch.ones(grid_sizes[0],grid_sizes[1],grid_sizes[2] , 3)
+        # print(box[...,0].shape, g.unsqueeze(0).unsqueeze(-1).shape)
+        box[...,0] *= samples_x.unsqueeze(0).unsqueeze(0).repeat(grid_sizes[0], grid_sizes[1], 1)
+        box[...,1] *= samples_y.unsqueeze(0).unsqueeze(-1).repeat(grid_sizes[0], 1, grid_sizes[2])
+        box[...,2] *= samples_z.unsqueeze(-1).unsqueeze(-1).repeat(1, grid_sizes[1], grid_sizes[2])
+        return box
+        # box = box.to(device)
+        # box = (box - 0.5)*2

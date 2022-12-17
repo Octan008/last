@@ -1,14 +1,14 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Red_grad_test
-basedir = ./refreshlog
-#basedir = ./log_trash
+expname =  Red_grad_direct
+#basedir = ./refreshlog
+basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
-caster = mlp
+caster = direct_map
 use_gt_skeleton = 1
-#free_opt2 = 1
+free_opt2 = 1
 #free_opt3 = 1
 JOKE = 0
 
@@ -29,7 +29,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 n_iters = 300000
 #batch_size = 4096
 batch_size = 512
-test_batch_size = 2048
+test_batch_size = 4096
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3
@@ -37,7 +37,7 @@ N_voxel_final = 27000000 # 300**3
 upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
-N_vis = 2
+N_vis = 5
 vis_every = 4000
 step_ratio = 2
 #vis__every

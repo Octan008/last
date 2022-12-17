@@ -402,6 +402,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         kwargs = ckpt['kwargs']
         kwargs.update({'device':device})
         tensorf = eval(args.model_name)(**kwargs)
+        tensorf.step_ratio = args.step_ratio
+        tensorf.update_stepSize(tensorf.gridSize_tmp)
         tensorf.load(ckpt)
         tensorf.modify_aabb(torch.tensor([2.5, 2.5, 1]).to(device))
         
@@ -535,6 +537,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
             pCaster_origin = MLPCaster(len(joints), device, args = args)
         # pCaster_origin = MLPCaster_tcnn(len(joints), device)
         # pCaster_origin = MLPCaster_net(len(joints), device)
+    elif args.caster == "forward":
+        tensorf.forward_caster_mode = True
+        pCaster_origin = DistCaster()
     elif args.caster == "map":
         # if args.free_opt3:
         if False:
@@ -658,7 +663,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     elif args.caster == "direct_map":
             wd = 1e-6
-            lr = 1e-4
+            lr = 5e-3
             params =  [
                 {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
@@ -672,6 +677,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
             # if not args.use_gt_skeleton:
             #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
+    elif args.caster == "forward":
+        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0

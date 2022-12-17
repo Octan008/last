@@ -1,16 +1,16 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Yellow_grad_onlypos
+expname =  #Yellow_forward_test
 #basedir = ./refreshlog
 basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
-caster = direct_map
+caster = forward
 use_gt_skeleton = 1
 free_opt2 = 1
 #free_opt3 = 1
-JOKE = 1
+JOKE = 0
 
 pose_type = euler
 
@@ -28,7 +28,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 
 n_iters = 300000
 #batch_size = 4096
-batch_size = 512
+batch_size = 8
 test_batch_size = 4096
 progress_refresh_rate = 1
 
@@ -39,7 +39,7 @@ update_AlphaMask_list = [2000,4000]
 
 N_vis = 5
 vis_every = 4000
-step_ratio = 2
+step_ratio = 64
 #vis__every
 
 render_test = 1

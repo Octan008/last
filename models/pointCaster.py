@@ -25,6 +25,8 @@ class PoseVector(nn.Module):
 
     def forward(self, i):
         return self.pose_params(torch.tensor([i], device = self.device))
+    def init_weights(self, distribution):
+        torch.nn.init.uniform_(self.pose_params.weight, -distribution, distribution)
 
 
 # from torchngp.nerf.renderer import NeRFRenderer
@@ -305,21 +307,35 @@ class DirectMapCaster(CasterBase):
         self.interface_dim = 32        
         self.trunk_dim = 32
         self.interface_layer = None
+        self.if_use_bias = True
         
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=6)
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=5)
 
         self.encoder = self.encoder
         self.pose_dim = 8
+        self.distribution = 1e-1
 
         self.pose_params = PoseVector(num_frames, self.pose_dim, device).to(device)
 
 
         self.map_nets = []
-        self.interface_layer = nn.Linear(self.in_dim+self.pose_dim, self.interface_dim, bias=True).to(device)
+        self.interface_layer = nn.Linear(self.in_dim+self.pose_dim, self.interface_dim, bias=self.if_use_bias).to(device)
+        
         self.map_nets = nn.Sequential().to(device)
-        self.map_nets.add_module('linear1', nn.Linear(self.interface_dim, self.trunk_dim, bias=True).to(device))
-        self.branch_w = nn.Linear( self.trunk_dim, 3, bias=True).to(device)
-        self.branch_v = nn.Linear( self.trunk_dim, 3, bias=True).to(device)
+        self.map_nets.add_module('linear1', nn.Linear(self.interface_dim, self.trunk_dim, bias=self.if_use_bias).to(device))
+        self.branch_w = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
+        self.branch_v = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
+
+        torch.nn.init.uniform_(self.interface_layer.weight, -self.distribution, self.distribution)
+        torch.nn.init.uniform_(self.interface_layer.bias, -self.distribution, self.distribution)
+        for i in range(len(self.map_nets)):
+            torch.nn.init.uniform_(self.map_nets[i].weight, -self.distribution, self.distribution)
+            torch.nn.init.uniform_(self.map_nets[i].bias, -self.distribution, self.distribution)
+        torch.nn.init.uniform_(self.branch_w.weight, -self.distribution, self.distribution)
+        torch.nn.init.uniform_(self.branch_w.bias, -self.distribution, self.distribution)
+        torch.nn.init.uniform_(self.branch_v.weight, -self.distribution, self.distribution)
+        torch.nn.init.uniform_(self.branch_v.bias, -self.distribution, self.distribution)
+        self.pose_params.init_weights(self.distribution)
 
         # self.map_nets = FFMLP(
         #         input_dim=self.interface_dim, 
@@ -345,6 +361,7 @@ class DirectMapCaster(CasterBase):
 
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x, i_frame):
+        x = self.normalize_coord(x)
         tmp = self.encoder(x, bound=self.bound)
         # print("encoded", torch.max(tmp, dim=0).values-torch.min(tmp, dim=0).values)
         embed = self.pose_params(i_frame).expand(tmp.shape[0], -1)
