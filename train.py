@@ -989,6 +989,16 @@ def skeleton_optim(rank, args, n_gpu = 1):
         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
+def cast_invert(rank, args, n_gpu = 1):
+    pass
+    # pcasterの初期化
+    # pcaster_inv の初期化
+    # iteration
+        # boxの作成 - random
+        # xyz -> casted
+        # casted -> xyz
+        # loss
+
 
 
 if __name__ == '__main__':

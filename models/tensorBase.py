@@ -647,20 +647,17 @@ class TensorBase(torch.nn.Module):
         shape = xyz_sampled.shape
 
         if self.forward_caster_mode:
-            # box = self.get_grid_points([200,200,200]).to(self.device)
-            box = self.get_grid_points([2,2,2]).to(self.device)
+            grid_res = 50
+            box = self.get_grid_points([grid_res, grid_res, grid_res]).to(self.device)
+            # box = self.get_grid_points([2,2,2]).to(self.device)
             box_shape = box.shape
             # box = box.view(-1,3)
             tmp_xyz_sampled = xyz_sampled
-            refference_table = xyz_sampled.view(-1,3).unsqueeze(1).expand(-1,box.view(-1,3).shape[0],-1) #N, bN, 3
             xyz_sampled = box
-            # refference_table = refference_table - box.unsqueeze(0).expand(refference_table.shape[0],-1,-1) #N, bN, 3
-            # refference_table = torch.exp(-torch.norm(refference_table, dim=-1)) #N, bN
-            # effect_table, inds = torch.topk(refference_table, 3, dim=-1) #N, 3
-            # print(xyz_sampled.shape, box.shape, refference_table.shape, effect_table.shape, inds.shape)
-            # print(effect_table)
-            # print(inds)
-            # exit()
+            shape = xyz_sampled.shape
+            tmp_shape = tmp_xyz_sampled.shape
+            tmp_viewdirs = viewdirs
+
 
 
 
@@ -737,25 +734,10 @@ class TensorBase(torch.nn.Module):
             if_cast = True
             torch.cuda.empty_cache()
             if if_cast:
-                # if self.args.free_opt4:
-                #     # self.old_xyz_sampled = xyz_sampled
-                #     dummy_transforms = torch.eye(4).repeat(transforms.shape[0], 1, 1).to(transforms.device)
-                #     trash1, trash2 = self.caster(xyz_sampled, viewdirs, dummy_transforms, ray_valid)
-                #     old_caster_weights = self.caster_origin.get_weights()
-                #     weights_sum = torch.sum(old_caster_weights, dim=1)
-                #     self.old_bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
 
-                #     sigma_feature = self.compute_densityfeature(self.normalize_coord(xyz_sampled).reshape(shape[0],shape[1], 3)[ray_valid])
-                #     torch.cuda.empty_cache()
-
-                #     validsigma = self.feature2density(sigma_feature)
-                #     old_sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-                #     old_sigma[ray_valid] = validsigma
-                #     alpha, self.old_sigma_weight, bg_weight = raw2alpha(old_sigma, dists * self.distance_scale)
-                #     del sigma_feature, validsigma, old_sigma, alpha, bg_weight, weights_sum, old_caster_weights, dummy_transforms
-                #     torch.cuda.empty_cache()
-
-                xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+                if self.forward_caster_mode:
+                    viewdirs = torch.ones_like(xyz_sampled)
+                # xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
                 # print("casting", xyz_sampled.grad_fn)
                 # exit()
                 # self.clamp_pts(self, xyz_sampled)
@@ -763,6 +745,88 @@ class TensorBase(torch.nn.Module):
                     self.caster_weights = self.caster_origin.get_weights()
                     weights_sum = torch.sum(self.caster_weights, dim=1)
                     self.bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
+
+                if self.forward_caster_mode:
+
+                    # self.caster_weights = self.caster_origin.get_weights()
+                    effectnum = 50
+                    rays_d = rays_chunk[:, 3:6]
+                    rays_o = rays_chunk[:, :3]
+                    xyz_sampled = xyz_sampled.view(-1, 3)
+                    k = torch.sum(xyz_sampled.view(1, -1, 3).expand(rays_d.shape[0], -1, -1) *  rays_d.view(-1, 1, 3).expand(-1, xyz_sampled.shape[0], -1), dim=-1)
+                    op = xyz_sampled.view(1, -1, 3).expand(rays_d.shape[0], -1, -1) - rays_o.view(-1, 1, 3).expand(-1, xyz_sampled.shape[0], -1)
+                    oh =  rays_d.view(-1, 1, 3).expand(-1, xyz_sampled.shape[0], -1) * k.view(-1, xyz_sampled.shape[0], 1).expand(-1, -1, 3)
+                    effects =  -torch.norm(op - oh, dim=-1) # rayn, bN
+                    effect_table, inds = torch.topk(effects, effectnum, dim=-1)# rayn, effectnum
+                    new_box = torch.gather(xyz_sampled, 0, inds.view(-1, 1).expand(-1, 3)).view(-1, effectnum, 3) # rayn, 50, 3
+
+                    refference_table = tmp_xyz_sampled.view(tmp_shape).unsqueeze(2).expand(-1,-1,effectnum,-1) #rayn,effectnum, sample, 3
+                    # refference_table = refference_table.permute(2,0,1,3) #sample, rayn, effectnum, 3
+                    refference_table = refference_table - new_box.unsqueeze(1).expand(tmp_shape[0], tmp_shape[1], effectnum, 3) #sample, rayn, effectnum, 3
+                    
+                    refference_table = torch.exp(-0.0005*torch.norm(refference_table, dim=-1)) #sample, rayn, effectnum
+                    # refference_table = 1.0/torch.norm(refference_table, dim=-1) #sample, rayn, effectnum
+                    # refference_table = refference_table.permute(1,0,2) #rayn, sample, effectnum
+                    topk = 1
+                    effect_table, tmp_inds = torch.topk(refference_table, topk, dim=-1) #rayn, sample, 3
+                    inds = torch.gather(inds, 1, tmp_inds.view(rays_d.shape[0], -1)).view(rays_d.shape[0], -1, topk) #rayn, sample, 3
+                    effect_table = effect_table / torch.sum(effect_table, dim=-1, keepdim=True)
+                    effect_table = effect_table.view(-1,topk)
+                    del refference_table, tmp_inds, new_box
+                    
+
+                    #     refference_table = tmp_xyz_sampled.view(-1,3).unsqueeze(1).expand(-1,box.view(-1,3).shape[0],-1) #N, bN, 3
+                    #     self.caster_weights = self.caster_origin.get_weights()
+                    #     refference_table = refference_table - xyz_sampled.view(-1,3).unsqueeze(0).expand(refference_table.shape[0],-1,-1) #N, bN, 3
+                    #     refference_table = torch.exp(-torch.norm(refference_table, dim=-1)) #N, bN
+                    #     # print("refference_table", refference_table.shape)
+                    #     effect_table, inds = torch.topk(refference_table, 3, dim=-1) #N, 3
+                    # del refference_table
+                    torch.cuda.empty_cache()
+                    xyz_sampled = self.normalize_coord(xyz_sampled)
+                    sigma_feature = self.compute_densityfeature(xyz_sampled.view(-1, 3)) #bN, feats
+                    validsigma = self.feature2density(sigma_feature)                    
+                    ref_sigmas = torch.gather(validsigma, 0, inds.view(-1)).view(-1, topk)  #N, 3, feats
+
+                    sigma = torch.sum(ref_sigmas * effect_table, dim=-1) #N
+                    alpha, weight, bg_weight = raw2alpha(sigma.view(-1, 1), dists.view(-1, 1) * self.distance_scale)#N, 1
+
+                    app_features = self.compute_appfeature(xyz_sampled.view(-1, 3))   #bN, feats
+                    ref_app_features = torch.gather(app_features, 0, inds.view(-1).unsqueeze(-1).expand(-1, app_features.shape[1])).view(alpha.shape[0], -1, app_features.shape[1]) #N, 3, feats
+                    interpolated_app_features = torch.sum(ref_app_features * effect_table.unsqueeze(-1).expand(-1,-1, app_features.shape[1]), dim=1) #N, feats
+                    # app_mask = weight > self.rayMarch_weight_thres
+                    app_mask = weight > -1
+                    app_mask = app_mask.squeeze()
+                    # print(torch.max(tmp_viewdirs.contiguous().view(-1, 3)), torch.min(tmp_viewdirs.contiguous().view(-1, 3)))
+                    valid_rgbs = self.renderModule(None, tmp_viewdirs.contiguous().view(-1, 3)[app_mask], interpolated_app_features[app_mask])#.view(tmp_shape)
+                    app_mask = app_mask.view(tmp_shape[:2])
+                    rgb[app_mask] = valid_rgbs
+                    if torch.isnan(rgb).any()or torch.isinf(rgb).any():
+                        raise ValueError("rgb is nan")
+
+                    weight = weight.view(tmp_shape[:2])
+
+                    acc_map = torch.sum(weight, -1)
+                    rgb_map = torch.sum(weight[..., None] * rgb, -2)
+
+                    if white_bg or (is_train and torch.rand((1,))<0.5):
+                        rgb_map = rgb_map + (1. - acc_map[..., None])
+
+                    rgb_map = rgb_map.clamp(0,1)
+
+                    with torch.no_grad():
+                        depth_map = torch.sum(weight * z_vals, -1)
+                        depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
+
+                    if not self.data_preparation:
+                        if draw_joints:
+                            rgb_map[draw_mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=rgb_map.device)
+                    if torch.isnan(rgb_map).any() or torch.isinf(rgb_map).any():
+                        raise ValueError("rgb map is nan")
+
+                    return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
+
+
                     
 
             save_npz = False;
@@ -772,159 +836,13 @@ class TensorBase(torch.nn.Module):
                 save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
             torch.cuda.empty_cache()
 
-        # print(self.use_ngprender)
-        # exit("debug_self.use_ngprender:")
-        # Compute_sigma
-
-        if self.use_ngprender:
-            # print(shape)
-            with torch.cuda.amp.autocast(enabled=True):
-                self.bound_box_rate = torch.transpose(torch.tensor([
-                        [-0.5, 0.8],[-0.1, 0.5],[-0.55, 0.55]
-                        # [-1.0, 1.0],[-1.0, 1.0],[-1.0, 1.0]
-                    ], device = torch.device("cuda:0")
-                ), 0, 1)
-                N, num_steps = shape[0], shape[1]
-                # print(N,num_steps)
-                # exit()
-                # # extra state for cuda raymarching
-                # self.cuda_ray = cuda_ray
-                # self.skeleton_mode = skeleton_mode
-                # self.initiation = initiation
-                # self.mix_render = mix_render
-                # # self.bound_rate = torch.tensor([0.7, 0.6, 0.6], device=torch.device("cuda:0"))
-                self.bound_rate = torch.tensor([1.0, 1.0, 1.0], device=torch.device("cuda:0"))
-
-                rays_o = rays_chunk[:, :3]#.unsqueeze(1).repeat(1, upsample_steps, 1) # [N, t, 3]
-                rays_d = rays_chunk[:, 3:6]#.unsqueeze(1).repeat(1, upsample_steps, 1) # [N, t, 3]
-                near, far = near_far_from_bound(rays_o, rays_d, 2, type='cube', bound_rate = self.bound_rate, bound_box=self.bound_box_rate)
-                # near, far = near_far_from_bound(rays_o, rays_d, self.bound, type='cube', bound_rate = self.bound_rate)
-
-                #print(f'near = {near.min().item()} ~ {near.max().item()}, far = {far.min().item()} ~ {far.max().item()}')
-                z_vals = torch.linspace(0.0, 1.0, num_steps, device=self.device).unsqueeze(0) # [1, T]
-                z_vals = z_vals.expand((N, num_steps)) # [N, T]
-                z_vals = near + (far - near) * z_vals # [N, T], in [near, far]
-
-                # perturb z_vals
-                sample_dist = (far - near) / num_steps
-                # if perturb:
-                z_vals = z_vals + (torch.rand(z_vals.shape, device=self.device) - 0.5) * sample_dist
-                    # z_vals = z_vals.clamp(near, far) # avoid out of bounds xyzs.
-
-                # generate xyzs
-                xyz_sampled = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1) # [N, 1, 3] * [N, T, 1] -> [N, T, 3]
-                # tmp = xyzs.clone().detach()
-
-
-                density_outputs = self.ngprenderer.density(xyz_sampled.reshape(-1, 3))
-                for k, v in density_outputs.items():
-                    # N, num_steps = shape[0], shape[1]
-                    density_outputs[k] = v.view(N, num_steps, -1)
-
-
-            deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T-1] #zvalsはある
-            near, far = self.near_far
-            # far *= 10;
-            sample_dist = (far - near) / N_samples
-            
-            deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
-            self.density_scale = 250
-            alphas = 1 - torch.exp(-deltas * self.density_scale * density_outputs['sigma'].squeeze(-1)) # [N, T]
-            alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+1]
-            weights = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T]
-
-            # # sample new z_vals
-            N_samples = N_samples if N_samples>0 else self.nSamples
-            upsample_steps = N_samples
-            z_vals_mid = (z_vals[..., :-1] + 0.5 * deltas[..., :-1]) # [N, T-1]
-            new_z_vals = sample_pdf(z_vals_mid, weights[:, 1:-1], upsample_steps, det=not self.training).detach() # [N, t]
-
-            # print(rays_o.shape, new_z_vals.shape, rays_d.shape)
-            new_xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * new_z_vals.unsqueeze(-1) # [N, 1, 3] * [N, t, 1] -> [N, t, 3]
-            new_dirs = rays_d.view(-1, 1, 3).expand_as(new_xyzs)
-            # #Todo: clamp
-            # new_xyzs = clamp_xyz(new_xyzs, self.bound, self.bound_rate, self.bound_box_rate)
-            # print(xyz_sampled.shape, new_xyzs.shape)
-            # exit()
-
-
-            # if not self.data_preparation:
-            #     if_cast = True
-            #     if if_cast:
-            #         xyz_sampled, garbage = self.caster(xyz_sampled, viewdirs, transforms, ray_valid)
-            #         self.caster_weights = self.caster_origin.get_weights()
-
-            #     save_npz = False;
-            #     if save_npz:
-            #         save_npz = {}
-            #         save_npz["weights"] = self.caster_weights.cpu().numpy()
-            #         save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
-
-            #second
-            with torch.cuda.amp.autocast(enabled=True):
-                new_density_outputs = self.ngprenderer.density(new_xyzs.reshape(-1, 3))
-                #new_sigmas = new_density_outputs['sigma'].view(N, upsample_steps) # [N, t]
-                for k, v in new_density_outputs.items():
-                    new_density_outputs[k] = v.view(N, upsample_steps, -1)
-
-            # re-order
-            z_vals = torch.cat([z_vals, new_z_vals], dim=1) # [N, T+t]
-            z_vals, z_index = torch.sort(z_vals, dim=1)
-            # print("z-vals2", z_vals.shape, z_index.shape)
-
-            xyzs = torch.cat([xyz_sampled, new_xyzs], dim=1) # [N, T+t, 3]
-            xyzs = torch.gather(xyzs, dim=1, index=z_index.unsqueeze(-1).expand_as(xyzs))
-        
-            for k in density_outputs:
-                tmp_output = torch.cat([density_outputs[k], new_density_outputs[k]], dim=1)
-                density_outputs[k] = torch.gather(tmp_output, dim=1, index=z_index.unsqueeze(-1).expand_as(tmp_output))
-
-            deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T+t-1]
-            deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
-            alphas = 1 - torch.exp(-deltas * self.density_scale * density_outputs['sigma'].squeeze(-1)) # [N, T+t]
-            alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+t+1]
-            weight = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T+t]
-
-
-            mask = weight > 1e-4 # hard coded
-
-            # if self.nerfonly_mode:
-            #     dirs = rays_d.view(-1, 1, 3).expand_as(xyzs)
-
-            dirs = torch.cat([viewdirs, new_dirs], dim=1) # [N, T+t, 3]
-            dirs = torch.gather(dirs, dim=1, index=z_index.unsqueeze(-1).expand_as(dirs))
-
-            rgbs = self.ngprenderer.color(xyzs.reshape(-1,3), dirs.reshape(-1,3), mask=mask.reshape(-1), **density_outputs)
-            
-
-
-            rgbs = rgbs.view(N, -1, 3) # [N, T+t, 3]
-            # alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
-
-            acc_map = torch.sum(weight, -1)
-            rgb_map = torch.sum(weight[..., None] * rgbs, -2)
-
-            if white_bg or (is_train and torch.rand((1,))<0.5):
-                rgb_map = rgb_map + (1. - acc_map[..., None])
-
-            rgb_map = rgb_map.clamp(0,1)
-
-            with torch.no_grad():
-                depth_map = torch.sum(weight * z_vals, -1)
-                depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
-
-            if not self.data_preparation:
-                if draw_joints:
-                    rgb_map[draw_mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=rgb_map.device)
-            return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
         if ray_valid.any():
                 
 
             xyz_sampled = self.normalize_coord(xyz_sampled)
 
             xyz_sampled = xyz_sampled.reshape(shape[0],shape[1], 3)
-            # print(xyz_sampled.shape, xyz_sampled.reshape(-1,3).shape)
-            # print(xyz_sampled[ray_valid].shape)
+
             sigma_feature = self.compute_densityfeature(xyz_sampled[ray_valid])
             torch.cuda.empty_cache()
 
@@ -1015,6 +933,7 @@ class TensorBase(torch.nn.Module):
     def get_grid_points(self, grid_sizes, box = None):
         if box is None:
             box = self.ray_aabb
+            # box = self.aabb * 0.5
             gridsize = 200
         # box_width = box[1] - box[0]
         samples_x = torch.linspace(box[0][0], box[1][0], grid_sizes[0])
