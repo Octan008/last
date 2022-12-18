@@ -1,16 +1,17 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  #Yellow_forward_test
-#basedir = ./refreshlog
-basedir = ./log_trash
+expname =  #strage_mlp
+basedir = ./refreshlog
+#basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
-caster = forward
+caster = mlp
+mimik = test1
 use_gt_skeleton = 1
-free_opt2 = 1
+#free_opt2 = 1
 #free_opt3 = 1
-JOKE = 1
+JOKE = 0
 
 pose_type = euler
 
@@ -21,7 +22,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 
 #ckpt_skeleton = ./strage_log/default_upsample/default_upsample_skeleton_it59999.th
 
-#ckpt_pcaster = ./log/tensorf_anim_VM_pcasterPole/tensorf_anim_VM_traintest001_pCaster.th
+#ckpt_pcaster = ./strage_log/mlp_gtskel/Green_integrated_pCaster_it15999.th
 
 #sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
 
@@ -29,7 +30,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 n_iters = 300000
 #batch_size = 4096
 batch_size = 512
-test_batch_size = 1024
+test_batch_size = 4096
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3
@@ -40,7 +41,6 @@ update_AlphaMask_list = [2000,4000]
 N_vis = 5
 vis_every = 4000
 step_ratio = 2
-#vis__every
 
 render_test = 1
 

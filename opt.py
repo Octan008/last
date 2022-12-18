@@ -119,10 +119,13 @@ def config_parser(cmd=None):
     parser.add_argument("--export_mesh", type=int, default=0)
     parser.add_argument("--caster", type=str, default=None,
                 help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--mimik", type=str, default=None,
+                help='specific weights npy file to reload for coarse network')
 
     parser.add_argument("--use_gt_skeleton", type=int, default=0)
     parser.add_argument("--local_batching", type=int, default=0)
     parser.add_argument("--data_preparation", type=int, default=0)
+    parser.add_argument("--cyclic", type=int, default=0)
 
     parser.add_argument("--free_opt1", type=int, default=0)
     parser.add_argument("--free_opt2", type=int, default=0)

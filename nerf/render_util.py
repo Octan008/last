@@ -330,7 +330,7 @@ def make_joints_from_blender(file_path, device="cuda"):
         if len(data["children"]) == 0:
             translate = torch.tensor(np.array(data_pos[name]["tail"]) - np.array(data_pos[name]["head"])).float()
             translate = torch.mv(obj_bind[:3,:3], translate)
-            bind_pose[:3,3] += translate
+            bind_pose[:3,3] = bind_pose[:3,3] + translate
             joint.add_child(
                 Joint(
                     bind_pose=bind_pose,
@@ -390,7 +390,7 @@ def cast_positions(positions, joints, weights_list = None):
     for i, j in enumerate(joints):
         mat = j.inv_totalTransform(ngp=True).unsqueeze(0).expand(positions.shape[0],-1,-1)
 
-        casted += torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
+        casted = casted  + torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
         # if torch.isnan(casted).any() or torch.isinf(casted).any():
         #     raise ValueError("error!")
     del ones, weights_list, positions, mat

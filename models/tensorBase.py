@@ -615,6 +615,9 @@ class TensorBase(torch.nn.Module):
         
     def set_tmp_animframe_index(self, index):
         self.tmp_animframe_index = index
+    
+    def mimik_mode(self, mode):
+        self.mimik_mode = mode
 
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1, skeleton_props=None, is_render_only=False):
@@ -738,6 +741,7 @@ class TensorBase(torch.nn.Module):
                 if self.forward_caster_mode:
                     viewdirs = torch.ones_like(xyz_sampled)
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+
                 # print("casting", xyz_sampled.grad_fn)
                 # exit()
                 # self.clamp_pts(self, xyz_sampled)
@@ -945,5 +949,3 @@ class TensorBase(torch.nn.Module):
         box[...,1] *= samples_y.unsqueeze(0).unsqueeze(-1).repeat(grid_sizes[0], 1, grid_sizes[2])
         box[...,2] *= samples_z.unsqueeze(-1).unsqueeze(-1).repeat(1, grid_sizes[1], grid_sizes[2])
         return box
-        # box = box.to(device)
-        # box = (box - 0.5)*2

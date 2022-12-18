@@ -1,8 +1,8 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Blue_elastic_loss
-basedir = ./refreshlog
-#basedir = ./log_trash
+expname =  Blue_eloss
+#basedir = ./refreshlog
+basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 

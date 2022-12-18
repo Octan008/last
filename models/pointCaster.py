@@ -170,10 +170,9 @@ class MLPCaster(CasterBase):
         
         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
         
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound)
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=5)
         self.interface_dim = 32
-        self.interface_layer = None
-        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
+        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=True).to(device)
         self.encoder = self.encoder.to(device)
 
         self.weight_nets = []
@@ -211,17 +210,27 @@ class MLPCaster(CasterBase):
         # # 1115
         weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
         self.weights = weights
+        # if viewdirs is not None:
+        #     weights = torch.cat([weights, weights], dim=0)
+        #     tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
+        # else:
+        #     tmp = xyz_sampled.view(-1, 3)
         weights = torch.cat([weights, weights], dim=0)
         tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
         tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
         if(tmp.isnan().any() or tmp.isinf().any()):
             ValueError("tmp is nan")
         #debug
+        # if viewdirs is not None:
+        #     xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
+        # else:
+        #     xyz_sampled = tmp
         xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
         xyz_sampled = xyz_sampled.view(shape)
         viewdirs = viewdirs.view(shape)
 
         return xyz_sampled, viewdirs
+    
 
     def compute_weights(self, xyz, transforms,  features=None, locs=None):
         # return compute_weisghts(xyz, self.joints).to(torch.float32)
@@ -325,23 +334,26 @@ class DirectMapCaster(CasterBase):
         
         # self.map_nets = nn.Sequential().to(device)
         # self.map_nets.add_module('linear1', nn.Linear(self.interface_dim, self.trunk_dim, bias=self.if_use_bias).to(device))
-        self.branch_w = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
-        self.branch_v = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
-
-        self.map_nets = FFMLP(
-                input_dim=self.interface_dim, 
-                # input_dim=self.interface_dim, 
-                # input_dim=3, 
-                output_dim= self.trunk_dim,
-                hidden_dim=self.hidden_dim,
-                num_layers=self.num_layers,
-            ).to(device)
-
-        torch.nn.init.uniform_(self.interface_layer.weight, -self.distribution, self.distribution)
-        torch.nn.init.uniform_(self.interface_layer.bias, -self.distribution, self.distribution)
         # for i in range(len(self.map_nets)):
         #     torch.nn.init.uniform_(self.map_nets[i].weight, -self.distribution, self.distribution)
         #     torch.nn.init.uniform_(self.map_nets[i].bias, -self.distribution, self.distribution)
+        self.map_nets = FFMLP(
+            input_dim=self.interface_dim, 
+            # input_dim=self.interface_dim, 
+            # input_dim=3, 
+            output_dim= self.trunk_dim,
+            hidden_dim=self.hidden_dim,
+            num_layers=self.num_layers,
+            std=self.distribution
+        ).to(device)
+
+        self.branch_w = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
+        self.branch_v = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
+
+
+        torch.nn.init.uniform_(self.interface_layer.weight, -self.distribution, self.distribution)
+        torch.nn.init.uniform_(self.interface_layer.bias, -self.distribution, self.distribution)
+
         torch.nn.init.uniform_(self.branch_w.weight, -self.distribution, self.distribution)
         torch.nn.init.uniform_(self.branch_w.bias, -self.distribution, self.distribution)
         torch.nn.init.uniform_(self.branch_v.weight, -self.distribution, self.distribution)
@@ -362,6 +374,15 @@ class DirectMapCaster(CasterBase):
     #         xyzs1 += torch.sin(xyzs * torch.exp(torch.tensor(i)))
     #         xyzs2 +=  torch.cos(xyzs* torch.exp(torch.tensor(i)))
     #     return xyzs1, xyzs2
+
+    def set_Cycle_pose(self, pose):
+        self.pose_params = pose
+        for param in self.pose_params.parameters():
+            param.requires_grad = False
+
+    def set_reqires_grad(self, flag):
+        for param in self.pose_params.parameters():
+            param.requires_grad = flag
 
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x, pose_params):
@@ -448,8 +469,15 @@ class DirectMapCaster(CasterBase):
         # return torch.autograd.functional.jacobian(func, points, create_graph=True, vectorize=True)
 
     @torch.cuda.amp.autocast(enabled=True)
-    def compute_elastic_loss(self):
-        jacobian = self.compute_jacobian(self.restore_xyz[:,:].reshape(-1, 3))
+    def compute_elastic_loss(self, num_sample = -1):
+        points = self.restore_xyz[:,:].reshape(-1, 3)
+        points_shape  = points.shape
+        idx = None
+        if num_sample > 0:
+            idx = torch.randint(0, points_shape[0], size=[num_sample], device=points.device)
+            points = torch.index_select(points, 0, idx)
+
+        jacobian = self.compute_jacobian(points.contiguous())
         # print(jacobian.shape)
         # print(torch.isinf(jacobian).any())
         __, svals, __ = torch.svd(jacobian.to(torch.float32), compute_uv=False)
@@ -462,7 +490,7 @@ class DirectMapCaster(CasterBase):
 
         # print(torch.isinf(loss).any())
         # print(loss.shape)
-        return self.scale_loss(residual)
+        return self.scale_loss(residual), idx
 
     def scale_loss(self, sq_residual, scale=0.03, alpha = -2, eps = 1e-6):
         # beta_safe = torch.clamp(torch.abs(torch.tensor(alpha) - 2.), eps).to(sq_residual.device)
@@ -691,7 +719,7 @@ class BWCaster(CasterBase):
                                                     align_corners=True).view(-1, *xyz_sampled.shape[1:2])
                 line_coef_point = F.grid_sample(self.app_line[idx_plane][i, 0].unsqueeze(0), coordinate_line[[idx_plane]],
                                                 align_corners=True).view(-1, *xyz_sampled.shape[1:2])
-                sigma_feature += torch.sum(plane_coef_point * line_coef_point, dim=0)
+                sigma_feature = sigma_feature + torch.sum(plane_coef_point * line_coef_point, dim=0)
 
             feats.append(sigma_feature)
         return F.relu(torch.stack(feats))
@@ -809,11 +837,12 @@ class shCaster(CasterBase):
         #     raise ValueError("nan or inf")
         #42
         eps = 1e-6
-        non_valid = rads < eps
+        # non_valid = rads < eps
+        rads = torch.clamp(rads, min=eps)
         relative_distance = torch.relu(1.0 - lengths/rads)#(j, sample)
         # if torch.isnan(relative_distance).any() or torch.isinf(relative_distance).any():
         #     raise ValueError("nan or inf")
-        relative_distance[non_valid] = 0.0
+        # relative_distance[non_valid] = relative_distance[non_valid]*0.0
         # if torch.isnan(relative_distance).any() or torch.isinf(relative_distance).any():
         #     raise ValueError("nan or inf")
         relative_distance = relative_distance.permute(1,0)#(j, sample) -> (sample, j)
@@ -940,7 +969,7 @@ class MapCaster_grid(CasterBase):
                                                     align_corners=True).view(-1, *xyz_sampled.shape[1:2])
                 line_coef_point = F.grid_sample(app_line[idx_plane][i, 0].unsqueeze(0), coordinate_line[[idx_plane]],
                                                 align_corners=True).view(-1, *xyz_sampled.shape[1:2])
-                sigma_feature += torch.sum(plane_coef_point * line_coef_point, dim=0)
+                sigma_feature = sigma_feature + torch.sum(plane_coef_point * line_coef_point, dim=0)
 
             feats.append(sigma_feature)
 
