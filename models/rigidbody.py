@@ -115,7 +115,7 @@ def exp_se3(S: torch.tensor, theta: torch.tensor) -> torch.tensor:
     # tmp = tmp.permute(2,0,1) @ W.permute(2,0,1)
     tmp = tmp.permute(2,0,1)
     p =  tmp @ v.permute(1,0).unsqueeze(-1)
-    p = p.squeeze().permute(1,0)
+    p = p.squeeze(-1).permute(1,0)
     return rp_to_se3(R, p)
 
 

@@ -1,13 +1,13 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Red_grad_direct
+expname =  Red_both
 #basedir = ./refreshlog
 basedir = ./log_trash
 add_timestamp = 1
 local_batching = 0
 
-caster = direct_map
-use_gt_skeleton = 1
+caster = mlp
+use_gt_skeleton = 0
 free_opt2 = 1
 #free_opt3 = 1
 JOKE = 0

@@ -737,7 +737,7 @@ class TensorBase(torch.nn.Module):
 
                 if self.forward_caster_mode:
                     viewdirs = torch.ones_like(xyz_sampled)
-                # xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+                xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
                 # print("casting", xyz_sampled.grad_fn)
                 # exit()
                 # self.clamp_pts(self, xyz_sampled)

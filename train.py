@@ -1,5 +1,6 @@
 
 import os
+import tensorflow
 from torch import tensor, unsqueeze
 from tqdm.auto import tqdm
 from opt import config_parser
@@ -663,7 +664,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     elif args.caster == "direct_map":
             wd = 1e-6
-            lr = 5e-3
+            lr = 1e-3
             params =  [
                 {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
@@ -799,6 +800,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 tvloss = 0
                 linearloss = 0
                 rest_loss = 0
+                eloss=0
                 if args.caster == "bwf":
                     # tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)* 100
                     # linearloss = pCaster_origin.linear_loss()* 0.01
@@ -809,7 +811,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # )
                     # loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
                     # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
-                    total_loss += tvloss  + linearloss 
+                    total_loss += tvloss  + linearloss
 
                 if args.caster == "sh" and not args.use_gt_skeleton:
                     pass
@@ -820,6 +822,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # rest_loss = torch.mean((bg_alpha - sigma) ** 2) * 1000000
                     # loss *= 0.0001
                     # total_loss += rest_loss
+                if args.caster == "direct_map":
+                    eloss = pCaster_origin.compute_elastic_loss()
+                    eloss = eloss * torch.clamp(tensorf.raw_sigma.view(-1), 0.0)
+                    eloss = eloss.sum(-1).mean() * 0.01
+                    total_loss += eloss
 
                 # loss
                 total_loss += loss
@@ -871,12 +878,14 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 if iteration % args.progress_refresh_rate == 0:
                     pbar.set_description(
                         f'Iteration {iteration:05d}:'
-                        + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
-                        + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
+                        # + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
+                        # + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
                         + f' mse = {loss:.6f}'
                         + f' tvloss = {tvloss:.6f}'
-                        + f' linearloss = {linearloss:.6f}'
-                        + f' restloss = {rest_loss:.6f}'
+                        # + f' linearloss = {linearloss:.6f}'
+                        # + f' restloss = {rest_loss:.6f}'
+                        + f' elastic_loss = {eloss:.6f}'
+
                     )
                     PSNRs = []
                 
