@@ -1,17 +1,23 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
 expname =  Blue_debug_mimik
-#basedir = "./refreshlog"
-basedir = "./log_trash"
+basedir = "./#refreshlog"
+#basedir = "./#log_trash"
 add_timestamp = 0
 local_batching = 0
 
 caster = direct_map
 use_gt_skeleton = 1
+free_opt2 = 1 # direct_map
+free_opt3 = 1
 
 mimik = test1
+ckpt_mimik = "./strage_log/MLP_1219/#green_strage_mlp_6_pCaster_it55999.th"
+
+#mimik = test2
+#ckpt_pcaster = "./strage_log/nefies_1219/#green_strage_mlp_6_pCaster_it55999.th"
 #free_opt2 = 1 # direct_map
-JOKE = 1
+JOKE = 0
 
 pose_type = euler
 
@@ -22,7 +28,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 
 #ckpt_skeleton = ./strage_log/default_upsample/default_upsample_skeleton_it59999.th
 
-ckpt_pcaster = "./strage_log/MLP_1219/#green_strage_mlp_6_pCaster_it55999.th"
+
 
 #sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
 
@@ -30,7 +36,7 @@ ckpt_pcaster = "./strage_log/MLP_1219/#green_strage_mlp_6_pCaster_it55999.th"
 n_iters = 300000
 #batch_size = 4096
 batch_size = 512
-test_batch_size = 4096
+test_batch_size = 2048
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3
@@ -39,7 +45,7 @@ upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
 N_vis = 5
-vis_every = 1000
+vis_every = 2000
 step_ratio = 0.5
 #vis__every
 

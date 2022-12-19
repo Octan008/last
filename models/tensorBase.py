@@ -352,6 +352,11 @@ class TensorBase(torch.nn.Module):
             self.caster_origin = caster
         self.caster_origin.set_aabbs(self.aabb, self.ray_aabb)
         self.caster_origin.set_args(self.args)
+        
+    def set_mimikCaster(self, caster):
+        self.mimik_caster = caster
+        self.mimik_caster.set_aabbs(self.aabb, self.ray_aabb)
+        self.mimik_caster.set_args(self.args)
 
     def set_skeletonmode(self):
         self.data_preparation = False
@@ -741,6 +746,9 @@ class TensorBase(torch.nn.Module):
                 if self.forward_caster_mode:
                     viewdirs = torch.ones_like(xyz_sampled)
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+                if self.args.mimik == "cycle":
+                    xyz_sampled, viewdirs = self.mimik_caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+
 
                 # print("casting", xyz_sampled.grad_fn)
                 # exit()

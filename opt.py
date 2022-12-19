@@ -106,6 +106,8 @@ def config_parser(cmd=None):
                         help='specific weights npy file to reload for coarse network')
     parser.add_argument("--ckpt_weights", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--ckpt_mimik", type=str, default=None,
+                        help='specific weights npy file to reload for coarse network')
     parser.add_argument("--sh_feats", type=str, default=None,
                     help='specific weights npy file to reload for coarse network')
 

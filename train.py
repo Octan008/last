@@ -825,11 +825,14 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # rest_loss = torch.mean((bg_alpha - sigma) ** 2) * 1000000
                     # loss *= 0.0001
                     # total_loss += rest_loss
-                if args.caster == "direct_map":
-                    eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = 10000)
+                if args.free_opt3:
+                    num_sample = 10000
+                    if args.free_opt3:
+                        num_sample = 1000
+                    eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
                     raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
                     eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                    eloss = eloss.sum(-1).mean() * 0.001
+                    eloss = eloss.sum(-1).mean() * 0.01
                     total_loss += eloss
 
                     # eloss, idx = pCaster_origin.compute_elastic_loss()

@@ -16,6 +16,7 @@ from torchngp.ffmlp import FFMLP
 from .rigidbody import * 
 from functools import partial
 import functorch
+from .py_ffmlp import *
 
 class PoseVector(nn.Module):
     def __init__(self, num_frames, num_dims, device, args = None):
@@ -61,6 +62,9 @@ class CasterBase(nn.Module):
         kwargs = self.get_kwargs()
         ckpt = {'kwargs': kwargs, 'state_dict': self.state_dict()}
         torch.save(ckpt, path)
+    def set_all_grads(self, flag):
+        for p in self.parameters():
+            p.requires_grad = flag
 
     def set_skeleton(self, skeleton):
         self.skeleton = skeleton
@@ -94,8 +98,6 @@ class CasterBase(nn.Module):
         return loss * scale
 
 
-
-
 class DistCaster(CasterBase):
     def __init__(self):
         super().__init__()
@@ -125,46 +127,57 @@ class DistCaster(CasterBase):
 
 # @torch.cuda.amp.autocast(enabled=True)
 class MLPCaster(CasterBase):
-    def __init__(self, dim, device, args = None):
+    def __init__(self, dim, device, args = None, use_ffmlp = False):
         super().__init__(args = args)
         encoding="hashgrid"
         encoding = "frequency"
-        # encoding_dir="sphere_harmonics"
         self.num_layers=2
         self.hidden_dim=64
-        # geo_feat_dim=15
-        # num_layers_color=3
-        # hidden_dim_color=64
         self.bound=1.0
-        # bound /= 4.0
-        # hidden_dim /= 4
         self.hidden_dim = int(self.hidden_dim)
 
+        self.if_use_ffmlp = use_ffmlp
+
         # sigma network
-        self.geo_feat_dim = geo_feat_dim = 0
-        
-        
-        # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.geo_feat_dim = 0
+
         
         self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=6)
         self.interface_dim = 32
         self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
 
-        self.weight_nets = []
-        for i in range(dim):
+        if self.if_use_ffmlp:
+            self.weight_nets = []
+            for i in range(dim):
+                self.weight_nets.append(
+                    FFMLP(
+                        # input_dim=self.in_dim, 
+                        input_dim=self.interface_dim, 
+                        # input_dim=3, 
+                        output_dim=1 + self.geo_feat_dim,
+                        hidden_dim=self.hidden_dim,
+                        num_layers=self.num_layers,
+                    ).to(device)
+                )
+            self.weight_nets = nn.ModuleList(self.weight_nets)
+        else:
+            self.weight_nets = []
+            for i in range(dim):
 
-            self.weight_nets.append(
-                FFMLP(
-                    # input_dim=self.in_dim, 
-                    input_dim=self.interface_dim, 
-                    # input_dim=3, 
-                    output_dim=1 + self.geo_feat_dim,
-                    hidden_dim=self.hidden_dim,
-                    num_layers=self.num_layers,
-                ).to(device)
-            )
-        self.weight_nets = nn.ModuleList(self.weight_nets)
+                self.weight_nets.append(
+                    py_FFMLP(
+                        # input_dim=self.in_dim, 
+                        input_dim=self.interface_dim, 
+                        # input_dim=3, 
+                        output_dim=1 + self.geo_feat_dim,
+                        hidden_dim=self.hidden_dim,
+                        num_layers=self.num_layers,
+                        device = device
+                    ).to(device)
+                )
+            self.weight_nets = nn.ModuleList(self.weight_nets)
+            
 
     @torch.cuda.amp.autocast(enabled=True)
     def density(self, x):
@@ -183,38 +196,59 @@ class MLPCaster(CasterBase):
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
-        # # 1115
-        weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
-        self.weights = weights
-        weights = torch.cat([weights, weights], dim=0)
-        tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
-        tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
-        if(tmp.isnan().any() or tmp.isinf().any()):
-            ValueError("tmp is nan")
-        #debug
+        
+
+        tmp = self.warp_points(xyz_sampled,  transforms, viewdirs = viewdirs)
+
+        # #points to weights
+        # weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
+        # self.weights = weights
+        # weights = torch.cat([weights, weights], dim=0)
+
+        # #points to new points
+        # tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
+        # tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+
+
+        # after care
         xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
         xyz_sampled = xyz_sampled.view(shape)
         viewdirs = viewdirs.view(shape)
 
         return xyz_sampled, viewdirs
+
+    @torch.cuda.amp.autocast(enabled=True)
+    def warp_points(self, points, transforms, viewdirs = None):
+        weights = self.compute_weights(points.view(-1, 3), transforms)
+        self.weights = weights
+        self.cache_transforms = transforms
+        self.restore_xyz = points
+
+        if viewdirs is not None:
+            weights = torch.cat([weights, weights], dim=0)
+            subjects = torch.cat([points.view(-1, 3),(points-viewdirs).view(-1, 3)], dim=0)
+            # transforms = torch.cat([transforms, transforms], dim=0)
+        else:
+            subjects = points.reshape(-1, 3)
+
+        return weighted_transformation(subjects, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
     
-
-    def compute_weights(self, xyz, transforms,  features=None, locs=None):
-        # return compute_weisghts(xyz, self.joints).to(torch.float32)
-
-       
+    @torch.cuda.amp.autocast(enabled=True)
+    def compute_weights(self, xyz, transforms,  features=None, locs=None):       
         xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
         if self.args.use_indivInv:
             invs = transforms
         else:
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
+        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
+        result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
         result = self.normalize_coord(result[:,:,:3])
         bwf = self.density(result) # [j,sample]
         return bwf.permute(1,0)
-
+        
+    @torch.cuda.amp.autocast(enabled=True)
     def compute_jacobian(self, points):
-        func = partial(self.warp_points, pose_params = self.pose_params(self.i_frame))
+        func = partial(self.warp_points, transforms = self.cache_transforms)
         return functorch.vmap(functorch.jacfwd(func))(points)
         # return torch.autograd.functional.jacobian(func, points, create_graph=True, vectorize=True)
 

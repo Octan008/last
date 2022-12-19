@@ -155,9 +155,6 @@ def Mimic_optim(rank, args, n_gpu = 1):
     w, h = train_dataset.img_wh
     print(w, h)
 
-    # if not args.ndc_ray:
-    #     allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
-    # trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
 
     Ortho_reg_weight = args.Ortho_weight
     print("initial Ortho_reg_weight", Ortho_reg_weight)
@@ -211,12 +208,33 @@ def Mimic_optim(rank, args, n_gpu = 1):
 
 
     if args.mimik == "test1":
-        if args.ckpt_pcaster is not None:
-            ckpt = torch.load(args.ckpt_pcaster)
-            mimik_pCaster = MLPCaster(len(joints), device, args = args)
-            mimik_pCaster.set_skeleton(skeleton)
-            print(ckpt["state_dict"].keys())
-            exit()
+        ckpt = torch.load(args.ckpt_mimik)
+        mimik_pCaster = MLPCaster(len(joints), device, args = args , use_ffmlp = True)
+        mimik_pCaster.set_skeleton(skeleton)
+        mimik_pCaster.load_state_dict(ckpt["state_dict"])
+        mimik_pCaster.set_all_grads(False)
+        tensorf.set_mimikCaster(mimik_pCaster)
+            
+            # exit()
+
+    elif args.mimik == "test2":
+        ckpt = torch.load(args.ckpt_mimik)
+        mimik_pCaster = DirectMapCaster(num_animFrames, device, args = args)
+        mimik_pCaster.set_skeleton(skeleton)
+        mimik_pCaster.load_state_dict(ckpt["state_dict"])
+        mimik_pCaster.set_all_grads(False)
+        tensorf.set_mimikCaster(mimik_pCaster)
+        # exit()
+    elif args.mimik == "cycle":
+        ckpt = torch.load(args.ckpt_mimik)
+        mimik_pCaster = DirectMapCaster(num_animFrames, device, args = args)
+        mimik_pCaster.set_skeleton(skeleton)
+        mimik_pCaster.load_state_dict(ckpt["state_dict"])
+        mimik_pCaster.set_all_grads(False)
+        tensorf.set_mimikCaster(mimik_pCaster)
+    else:
+        raise ValueError("mimik type not supported")
+    
     
 
     sh_field = SphereHarmonicJoints(len(joints), 9)
@@ -398,7 +416,7 @@ def Mimic_optim(rank, args, n_gpu = 1):
     for iteration in pbar:
         # # JOKE skeleton_optim
         if args.JOKE:
-            print("JOKE RENDER===")
+            print("JOKE RENDER extra===")
             if iteration == 0 or (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
                 skeleton_props ={"skeleton_dataset": skeleton_dataset}
                 PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
@@ -446,32 +464,49 @@ def Mimic_optim(rank, args, n_gpu = 1):
             with torch.cuda.amp.autocast(): 
                 tensorf.set_tmp_animframe_index(allanimframes[itr+num_frames*rank_diff])
         
-                with torch.no_grad():
-                    points = tensorf.get_grid_points([100,100,100])
-                    points = points.to(device)
-                    points = points.view(-1,3)
-                    if args.mimik == "test1":
+                
+                points = tensorf.get_grid_points([100,100,100])
+                points = points.to(device)
+                points = points.view(-1,3)
+                if args.mimik == "cycle":
+                    with torch.no_grad():
+                        _viewdirs = torch.tensor([1,0,0], device=device).repeat(points.shape[0],1)
+                        casted_xyzs, casted_viewdirs = mimik_pCaster(points, _viewdirs, None, None, i_frame = allanimframes[itr+num_frames*rank_diff])
+                    newxyzs, newviewdirs = pCaster_origin(casted_xyzs,  casted_viewdirs, None, None, i_frame = allanimframes[itr+num_frames*rank_diff])
+                    loss = torch.mean((newxyzs - points.reshape(-1,3))**2) + torch.mean((newviewdirs - _viewdirs)**2)
+                else:
+                    with torch.no_grad():
                         gt_skel_transforms = tensorf.skeleton.rotations_to_transforms_fast(test_dataset.frame_skeleton_pose[itr+num_frames*rank_diff], type=args.pose_type)
-                        ref_weights = mimik_pCaster.compute_weights(points.view(-1, 3), gt_skel_transforms)
-                        ref_transform = torch.matmul(ref_weights, gt_skel_transforms.view(transforms.shape[0], -1)).view(points.shape[0], 4, 4)
-                        # ref_inv = affine_inverse_batch(tmp)
+                    if args.mimik == "test1":
+                        with torch.no_grad():
+                            # gt_skel_transforms = tensorf.skeleton.rotations_to_transforms_fast(test_dataset.frame_skeleton_pose[itr+num_frames*rank_diff], type=args.pose_type)
+                            ref_weights = mimik_pCaster.compute_weights(points.view(-1, 3), gt_skel_transforms)
+                            ref_transforms = torch.matmul(ref_weights, gt_skel_transforms.view(gt_skel_transforms.shape[0], -1)).view(points.shape[0], 4, 4)
+                            # ref_inv = affine_inverse_batch(tmp)
+                        
+
+                    elif args.mimik == "test2":
+                        with torch.no_grad():
+                            ref_transforms = mimik_pCaster.compute_transforms(points, mimik_pCaster.pose_params(allanimframes[itr+num_frames*rank_diff]))
+                        # transforms = tensorf.skeleton.rotations_to_transforms_fast(skel, type=args.pose_type)
                     else:
-                        ref_transforms = mimik_pCaster.compute_transforms(points, mimik_pCaster.pose_param(allanimframes[itr+num_frames*rank_diff]))
-                        exit()
-
+                        raise ValueError("mimik not found")
                     
-                transforms = tensorf.skeleton.rotations_to_transforms_fast(skel, type=args.pose_type)
-                inf_weights = pCaster_origin.compute_weights(points.view(-1, 3), transforms)
-                inf_transform = torch.matmul(inf_weights, transforms.view(transforms.shape[0], -1)).view(points.shape[0], 4, 4)
 
-                loss = torch.mean((inf_transform - ref_transform) ** 2)
+                    if args.caster == "direct_map":
+                        inf_transform = pCaster_origin.compute_transforms(points, pCaster_origin.pose_params(allanimframes[itr+num_frames*rank_diff]))
+                        # exit("test2")
+                    elif args.caster == "mlp":
+                        transforms = tensorf.skeleton.rotations_to_transforms_fast(skel, type=args.pose_type)
+                        inf_weights = pCaster_origin.compute_weights(points.view(-1, 3), transforms)
+                        inf_transform = torch.matmul(inf_weights, transforms.view(transforms.shape[0], -1)).view(points.shape[0], 4, 4)
 
+                    else:
+                        raise ValueError("mimik not found")
+                    
 
-                
-                
-                
+                    loss = torch.mean((inf_transform - ref_transforms) ** 2)
 
-                
                 # rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                 #                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
                 # loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -489,26 +524,8 @@ def Mimic_optim(rank, args, n_gpu = 1):
 
                 if args.caster == "sh" and not args.use_gt_skeleton:
                     pass
-                    # # print("itr", itr)
-                    # bg_alpha = tensorf.old_bg_alpha
-                    # sigma = clip_weight(tensorf.old_sigma_weight, thresh = 1e-3)
-                    
-                    # rest_loss = torch.mean((bg_alpha - sigma) ** 2) * 1000000
-                    # loss *= 0.0001
-                    # total_loss += rest_loss
-                if args.caster == "direct_map":
-                    # eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = 1000)
-                    # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                    # eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                    # eloss = eloss.sum(-1).mean() * 0.01
-                    # total_loss += eloss
 
-                    # eloss, idx = pCaster_origin.compute_elastic_loss()
-                    # # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                    # raw_sigma = tensorf.raw_sigma.view(-1)
-                    # eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                    # eloss = eloss.sum(-1).mean() * 0.01
-                    # total_loss += eloss
+                if args.caster == "direct_map":
                     pass
 
                 # loss
@@ -572,7 +589,7 @@ def Mimic_optim(rank, args, n_gpu = 1):
                     )
                     PSNRs = []
                 
-                del rgb_map, alphas_map, depth_map, weights, uncertainty, loss, total_loss, tvloss, linearloss
+                # del rgb_map, alphas_map, depth_map, weights, uncertainty, loss, total_loss, tvloss, linearloss
                 if mix_precision:
                     scaler.step(optimizer) 
                 
