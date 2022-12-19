@@ -1,6 +1,6 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Blue_eloss
+expname =  Blue_eloss_scaleup
 #basedir = ./refreshlog
 basedir = ./log_trash
 add_timestamp = 1
@@ -38,7 +38,7 @@ upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
 N_vis = 5
-vis_every = 4000
+vis_every = 1000
 step_ratio = 0.5
 #vis__every
 

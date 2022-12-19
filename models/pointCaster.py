@@ -170,9 +170,9 @@ class MLPCaster(CasterBase):
         
         # self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
         
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=5)
+        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=6)
         self.interface_dim = 32
-        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=True).to(device)
+        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
         self.encoder = self.encoder.to(device)
 
         self.weight_nets = []
@@ -324,7 +324,7 @@ class DirectMapCaster(CasterBase):
 
         self.encoder = self.encoder
         self.pose_dim = 16
-        self.distribution = 1e-1
+        self.distribution = 0.15
 
         self.pose_params = PoseVector(num_frames, self.pose_dim, device).to(device)
 
@@ -332,20 +332,20 @@ class DirectMapCaster(CasterBase):
         self.map_nets = []
         self.interface_layer = nn.Linear(self.in_dim+self.pose_dim, self.interface_dim, bias=self.if_use_bias).to(device)
         
-        # self.map_nets = nn.Sequential().to(device)
-        # self.map_nets.add_module('linear1', nn.Linear(self.interface_dim, self.trunk_dim, bias=self.if_use_bias).to(device))
-        # for i in range(len(self.map_nets)):
-        #     torch.nn.init.uniform_(self.map_nets[i].weight, -self.distribution, self.distribution)
-        #     torch.nn.init.uniform_(self.map_nets[i].bias, -self.distribution, self.distribution)
-        self.map_nets = FFMLP(
-            input_dim=self.interface_dim, 
-            # input_dim=self.interface_dim, 
-            # input_dim=3, 
-            output_dim= self.trunk_dim,
-            hidden_dim=self.hidden_dim,
-            num_layers=self.num_layers,
-            std=self.distribution
-        ).to(device)
+        self.map_nets = nn.Sequential().to(device)
+        self.map_nets.add_module('linear1', nn.Linear(self.interface_dim, self.trunk_dim, bias=self.if_use_bias).to(device))
+        for i in range(len(self.map_nets)):
+            torch.nn.init.uniform_(self.map_nets[i].weight, -self.distribution, self.distribution)
+            torch.nn.init.uniform_(self.map_nets[i].bias, -self.distribution, self.distribution)
+        # self.map_nets = FFMLP(
+        #     input_dim=self.interface_dim, 
+        #     # input_dim=self.interface_dim, 
+        #     # input_dim=3, 
+        #     output_dim= self.trunk_dim,
+        #     hidden_dim=self.hidden_dim,
+        #     num_layers=self.num_layers,
+        #     std=self.distribution
+        # ).to(device)
 
         self.branch_w = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
         self.branch_v = nn.Linear( self.trunk_dim, 3, bias=self.if_use_bias).to(device)
@@ -490,7 +490,7 @@ class DirectMapCaster(CasterBase):
 
         # print(torch.isinf(loss).any())
         # print(loss.shape)
-        return self.scale_loss(residual), idx
+        return self.scale_loss(residual, scale = 0.5), idx
 
     def scale_loss(self, sq_residual, scale=0.03, alpha = -2, eps = 1e-6):
         # beta_safe = torch.clamp(torch.abs(torch.tensor(alpha) - 2.), eps).to(sq_residual.device)

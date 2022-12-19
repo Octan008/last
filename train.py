@@ -635,10 +635,12 @@ def skeleton_optim(rank, args, n_gpu = 1):
             {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
             {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
         ]
+        # print(list(pCaster_origin.weight_nets.parameters()))
+        # exit()
 
         params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        if args.free_opt1:
-            params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        # if args.free_opt1:
+        #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         if not args.use_gt_skeleton:
             params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
@@ -655,6 +657,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
             ]
+
             params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':1e-4})
             params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
             # if args.free_opt1:
@@ -666,7 +669,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
             wd = 1e-6
             lr = 1e-3
             params =  [
-                {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
+                {'name':'mapnets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
             ]
             params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':lr})
@@ -823,11 +826,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # loss *= 0.0001
                     # total_loss += rest_loss
                 if args.caster == "direct_map":
-                    # eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = 1000)
-                    # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                    # eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                    # eloss = eloss.sum(-1).mean() * 0.01
-                    # total_loss += eloss
+                    eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = 10000)
+                    raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                    eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                    eloss = eloss.sum(-1).mean() * 0.001
+                    total_loss += eloss
 
                     # eloss, idx = pCaster_origin.compute_elastic_loss()
                     # # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
