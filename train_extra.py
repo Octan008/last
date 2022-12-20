@@ -224,10 +224,17 @@ def Mimic_optim(rank, args, n_gpu = 1):
         mimik_pCaster.load_state_dict(ckpt["state_dict"])
         mimik_pCaster.set_all_grads(False)
         tensorf.set_mimikCaster(mimik_pCaster)
+        # print(ckpt["state_dict"].keys())
         # exit()
     elif args.mimik == "cycle":
+        # ckpt = torch.load(args.ckpt_mimik)
+        # mimik_pCaster = DirectMapCaster(num_animFrames, device, args = args)
+        # mimik_pCaster.set_skeleton(skeleton)
+        # mimik_pCaster.load_state_dict(ckpt["state_dict"])
+        # mimik_pCaster.set_all_grads(False)
+        # tensorf.set_mimikCaster(mimik_pCaster)
         ckpt = torch.load(args.ckpt_mimik)
-        mimik_pCaster = DirectMapCaster(num_animFrames, device, args = args)
+        mimik_pCaster = MLPCaster(len(joints), device, args = args , use_ffmlp = True)
         mimik_pCaster.set_skeleton(skeleton)
         mimik_pCaster.load_state_dict(ckpt["state_dict"])
         mimik_pCaster.set_all_grads(False)
@@ -336,6 +343,7 @@ def Mimic_optim(rank, args, n_gpu = 1):
         num_frames = num_frames // n_gpu
         if(rank < num_frames % n_gpu):
             num_frames += 1
+    tensorf.set_pointCaster(mimik_pCaster)
 
     grad_vars_skeletonpose = list(skeleton_dataset.parameters())
 
@@ -468,44 +476,83 @@ def Mimic_optim(rank, args, n_gpu = 1):
                 points = tensorf.get_grid_points([100,100,100])
                 points = points.to(device)
                 points = points.view(-1,3)
+                with torch.no_grad():
+                    gt_skel_transforms = tensorf.skeleton.rotations_to_transforms_fast(test_dataset.frame_skeleton_pose[itr+num_frames*rank_diff], type=args.pose_type)
                 if args.mimik == "cycle":
                     with torch.no_grad():
+                        sigma_feature = tensorf.compute_densityfeature(points)
+                        validsigma = tensorf.feature2density(sigma_feature)  
+                        loss_weight = clip_weight(validsigma, thresh = 1e-3)                
                         _viewdirs = torch.tensor([1,0,0], device=device).repeat(points.shape[0],1)
-                        casted_xyzs, casted_viewdirs = mimik_pCaster(points, _viewdirs, None, None, i_frame = allanimframes[itr+num_frames*rank_diff])
+                        casted_xyzs, casted_viewdirs = mimik_pCaster(points, _viewdirs, gt_skel_transforms, None, i_frame = allanimframes[itr+num_frames*rank_diff])
+
                     newxyzs, newviewdirs = pCaster_origin(casted_xyzs,  casted_viewdirs, None, None, i_frame = allanimframes[itr+num_frames*rank_diff])
-                    loss = torch.mean((newxyzs - points.reshape(-1,3))**2) + torch.mean((newviewdirs - _viewdirs)**2)
+                    diff = (newxyzs - points.reshape(-1,3))**2 + (newviewdirs - _viewdirs)**2
+
+                    loss = torch.mean(diff.permute(1,0) * loss_weight)
                 else:
-                    with torch.no_grad():
-                        gt_skel_transforms = tensorf.skeleton.rotations_to_transforms_fast(test_dataset.frame_skeleton_pose[itr+num_frames*rank_diff], type=args.pose_type)
-                    if args.mimik == "test1":
+                    
+                    if args.mimik == "test1":#use mlp
                         with torch.no_grad():
                             # gt_skel_transforms = tensorf.skeleton.rotations_to_transforms_fast(test_dataset.frame_skeleton_pose[itr+num_frames*rank_diff], type=args.pose_type)
                             ref_weights = mimik_pCaster.compute_weights(points.view(-1, 3), gt_skel_transforms)
+                            weights_sum = ref_weights.sum(dim=1)
+                            weights_sum = torch.clamp(weights_sum, min=1e-7)
+                            ref_weights = ref_weights/weights_sum.unsqueeze(1)
                             ref_transforms = torch.matmul(ref_weights, gt_skel_transforms.view(gt_skel_transforms.shape[0], -1)).view(points.shape[0], 4, 4)
-                            # ref_inv = affine_inverse_batch(tmp)
+                            new_points = torch.matmul(ref_transforms, torch.cat([points, torch.ones(points.shape[0], 1, device=device)], dim=1).unsqueeze(-1)).squeeze(-1)
+                            sigma_feature = tensorf.compute_densityfeature(new_points)
+                            validsigma = tensorf.feature2density(sigma_feature)                            
+                            # weights_sum = torch.sum(validsigma, dim=1)
+                            loss_weight = clip_weight(validsigma, thresh = 1e-3)
+                            ref_transforms = ref_transforms.permute(1,2,0) * loss_weight
                         
 
                     elif args.mimik == "test2":
                         with torch.no_grad():
                             ref_transforms = mimik_pCaster.compute_transforms(points, mimik_pCaster.pose_params(allanimframes[itr+num_frames*rank_diff]))
+                            new_points = torch.matmul(ref_transforms, torch.cat([points, torch.ones(points.shape[0], 1, device=device)], dim=1).unsqueeze(-1)).squeeze(-1)
+                            sigma_feature = tensorf.compute_densityfeature(new_points)
+                            validsigma = tensorf.feature2density(sigma_feature)                            
+                            # weights_sum = torch.sum(validsigma, dim=1)
+                            loss_weight = clip_weight(validsigma, thresh = 1e-3)
+                            ref_transforms = ref_transforms.permute(1,2,0) * loss_weight
                         # transforms = tensorf.skeleton.rotations_to_transforms_fast(skel, type=args.pose_type)
                     else:
                         raise ValueError("mimik not found")
                     
 
                     if args.caster == "direct_map":
-                        inf_transform = pCaster_origin.compute_transforms(points, pCaster_origin.pose_params(allanimframes[itr+num_frames*rank_diff]))
+                        inf_transforms = pCaster_origin.compute_transforms(points, pCaster_origin.pose_params(allanimframes[itr+num_frames*rank_diff]))
+                        with torch.no_grad():
+                            new_points = torch.matmul(inf_transforms, torch.cat([points, torch.ones(points.shape[0], 1, device=device)], dim=1).unsqueeze(-1)).squeeze(-1)
+                            sigma_feature = tensorf.compute_densityfeature(new_points)
+                            validsigma = tensorf.feature2density(sigma_feature)                            
+                            # weights_sum = torch.sum(validsigma, dim=1)
+                            inf_loss_weight = clip_weight(validsigma, thresh = 1e-3)
+                        inf_transforms = inf_transforms.permute(1,2,0) * inf_loss_weight
+                        # loss = torch.mean((inf_transform - ref_transforms) ** 2)
                         # exit("test2")
                     elif args.caster == "mlp":
                         transforms = tensorf.skeleton.rotations_to_transforms_fast(skel, type=args.pose_type)
                         inf_weights = pCaster_origin.compute_weights(points.view(-1, 3), transforms)
-                        inf_transform = torch.matmul(inf_weights, transforms.view(transforms.shape[0], -1)).view(points.shape[0], 4, 4)
+                        inf_transforms = torch.matmul(inf_weights, transforms.view(transforms.shape[0], -1)).view(points.shape[0], 4, 4)
+                        with torch.no_grad():
+                            new_points = torch.matmul(inf_transforms, torch.cat([points, torch.ones(points.shape[0], 1, device=device)], dim=1).unsqueeze(-1)).squeeze(-1)
+                            sigma_feature = tensorf.compute_densityfeature(new_points)
+                            validsigma = tensorf.feature2density(sigma_feature)                            
+                            # weights_sum = torch.sum(validsigma, dim=1)
+                            inf_loss_weight = clip_weight(validsigma, thresh = 1e-3)
+                        inf_transforms = inf_transforms.permute(1,2,0) * inf_loss_weight
+
+                    
 
                     else:
                         raise ValueError("mimik not found")
-                    
 
-                    loss = torch.mean((inf_transform - ref_transforms) ** 2)
+                    loss = torch.mean((inf_transforms - ref_transforms) ** 2)
+
+                    
 
                 # rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                 #                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)

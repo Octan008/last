@@ -1,6 +1,6 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Red_cyclic
+expname =  Red_cyclic_new
 basedir = "./#refreshlog"
 #basedir = "./#log_trash"
 add_timestamp = 1
@@ -12,7 +12,8 @@ free_opt2 = 1 # direct_map
 free_opt3 = 1
 
 mimik = cycle
-ckpt_mimik = "./strage_log/nefies_1219/Blue_eloss_scaleup_pCaster_it56999.th"
+ckpt_mimik = "./strage_log/MLP_1219/#green_strage_mlp_6_pCaster_it55999.th"
+#ckpt_mimik = "./strage_log/nefies_1219/Blue_eloss_scaleup_pCaster_it53999.th"
 
 #mimik = test2
 #ckpt_pcaster = "./strage_log/nefies_1219/#green_strage_mlp_6_pCaster_it55999.th"

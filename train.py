@@ -610,6 +610,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     grad_vars_skeletonpose = list(skeleton_dataset.parameters())
     
     
+    
 
     #<Training> Setup Optimizer
     # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
@@ -1013,161 +1014,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
-def cast_invert(rank, args, n_gpu = 1):
-    if args.add_timestamp:
-        logfolder = f'{args.basedir}/{args.expname}{datetime.datetime.now().strftime("-%Y%m%d-%H%M%S")}'
-    else:
-        logfolder = f'{args.basedir}/{args.expname}'
-    
-
-    # init log file
-    os.makedirs(logfolder, exist_ok=True)
-    os.makedirs(f'{logfolder}/imgs_vis', exist_ok=True)
-    os.makedirs(f'{logfolder}/imgs_rgba', exist_ok=True)
-    os.makedirs(f'{logfolder}/rgba', exist_ok=True)
-    summary_writer = SummaryWriter(logfolder)
-
-    if args.ckpt is not None:
-        ckpt = torch.load(args.ckpt, map_location=device)
-        kwargs = ckpt['kwargs']
-        kwargs.update({'device':device})
-        tensorf = eval(args.model_name)(**kwargs)
-        tensorf.step_ratio = args.step_ratio
-        tensorf.update_stepSize(tensorf.gridSize_tmp)
-        tensorf.load(ckpt)
-        tensorf.modify_aabb(torch.tensor([2.5, 2.5, 1]).to(device))
-    tensorf.set_args(args)
-    tensorf.set_posetype(args.pose_type)
-    tensorf.set_allgrads(False)
-    tensorf.use_gt_skeleton = args.use_gt_skeleton
-
-    animation_conf=args.datadir+"/transforms.json"
-    skeleton =  make_joints_from_blender(animation_conf, device = device)
-    skeleton.precompute_id(0)
-    joints = listify_skeleton(skeleton)
-    if args.free_opt4:
-        skeleton.para_precompute(len(joints))
-    skeleton.set_inv_precomputations(len(joints))
-    skeleton.set_as_root()
-    skeleton.set_tails(skeleton.get_tail_ids())
-    train_dataset.compute_skeleton_poses(skeleton)
-    test_dataset.compute_skeleton_poses(skeleton)
-    tensorf.set_skeleton(skeleton)
-    tensorf.set_skeletonmode()
-
-    # frames = json.load(open(animation_conf, 'r'))["frames"]
-
-    num_frames = len(train_dataset.frame_poses)
-
-    ray_per_img = test_dataset.rays_per_img
-    itr = 0
-    allrays = allrays.reshape(num_frames, -1, 6)
-    num_animFrames = len(train_dataset.unique_animFrames)
-    allanimframes = train_dataset.all_animFrames
-    allrgbs = allrgbs.reshape(num_frames, -1, 3)
-
-    rank_diff = rank - rank_criteria
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(rank)
-    if parallel:
-        dist.init_process_group("gloo", rank=rank, world_size=n_gpu)
-    # init dataset
-    dataset = dataset_dict[args.dataset_name]
-    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False, data_preparation = True)
-    test_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True, data_preparation = True)
-    num_animFrames = len(train_dataset.unique_animFrames)
-    print(f"num_animFrames: {num_animFrames}")
-    # pcasterの初期化
-    if args.caster == "map":
-        pCaster_origin = MapCaster(num_animFrames, device, args=args)
-        pCaster_cycle = MapCaster(num_animFrames, device, args=args)
-        wd = 1e-6
-        params =  [
-            {'name':'map_nets','params': list(pCaster_cycle.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
-            {'name':'encoder','params': list(pCaster_cycle.encoder.parameters()),  'lr': 2e-2}
-        ]
-        params.append({'name':'pose_params','params': list(pCaster_cycle.pose_params.parameters()), 'weight_decay': wd, 'lr':1e-4})
-        params.append({'name':'interface_layer','params': list(pCaster_cycle.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
-
-    elif  args.caster == "direct_map":
-        pCaster_origin = DirectMapCaster(num_animFrames, device, args=args)
-        pCaster_cycle = DirectMapCaster(num_animFrames, device, args=args)            
-        wd = 1e-6
-        lr = 1e-3
-        params =  [
-            {'name':'map_nets','params': list(pCaster_cycle.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
-            {'name':'encoder','params': list(pCaster_cycle.encoder.parameters()),  'lr': 2e-2}
-        ]
-        params.append({'name':'pose_params','params': list(pCaster_cycle.pose_params.parameters()), 'weight_decay': wd, 'lr':lr})
-        params.append({'name':'interface_layer','params': list(pCaster_cycle.interface_layer.parameters()), 'weight_decay': wd, 'lr': lr})
-        params.append({'name':'branch_w','params': list(pCaster_cycle.branch_w.parameters()), 'weight_decay': wd, 'lr': lr})
-        params.append({'name':'branch_v','params': list(pCaster_cycle.branch_v.parameters()), 'weight_decay': wd, 'lr': lr})
-        optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
-    else:
-        try:
-            x = 1 / 0
-        except:
-            traceback.print_exc()
-            exit("caster not found")
-
-    # pcaster_inv の初期化
-    pCaster_cycle.set_Cycle_pose(pCaster_origin.pose_params)
-    pCaster_origin.set_reqires_grad(False)
-
-
-    skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type=args.pose_type)
-    skeleton_dataset.to(device)
-    skeleton_dataset.set_tails(skeleton.get_tail_ids())
-    
-
-
-    if args.ckpt_pCaster is not None:
-        pass
-    else:
-        exit()
-    max_iteration = 10000
-    pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
-    
-    box_points = tensorf.get_grid_points([50,50,50])
-    shape = box_points.shape
-    for iteration in pbar:
-        casted_xyzs = pCaster_origin(box_points.reshape(-1,3))
-        xyzs = pCaster_cycle(casted_xyzs)
-        loss = torch.mean((xyzs - box_points.reshape(-1,3))**2)
-        optimizer.zero_grad()
-        loss.backward()
-        loss = loss.detach().item()
-
-
-        PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
-        summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
-        summary_writer.add_scalar('train/mse', loss, global_step=iteration)
-        if iteration % args.progress_refresh_rate == 0:
-            pbar.set_description(
-                f'Iteration {iteration:05d}:'
-                # + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
-                # + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
-                + f' mse = {loss:.6f}'
-
-            )
-            PSNRs = []
-        optimizer.step()
-        with torch.no_grad():
-            if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-                if rank == rank_criteria:
-                    skeleton_props ={"skeleton_dataset": skeleton_dataset}
-                    PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
-                    summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-                    # tensorf.save(f'{logfolder}/{args.expname}.th')
-                    # exit("EXITING")
-                    # if rank == 0:
-                    skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
-                    # sh_field.save(f'{logfolder}/{args.expname}_sh_it{iteration}.th')
-                    # if not args.caster == "sh":
-                    #     pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
-                    tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
-
-
 
 if __name__ == '__main__':
 
@@ -1187,9 +1033,9 @@ if __name__ == '__main__':
         # render_test(args)
         pass
     else:
-        if args.cyclic:
-            cast_invert(rank_criteria, args)
-            exit()
+        # if args.cyclic:
+        #     cast_invert(rank_criteria, args)
+        #     exit()
         if args.data_preparation:
             reconstruction(args)
             exit()

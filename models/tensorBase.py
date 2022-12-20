@@ -860,14 +860,7 @@ class TensorBase(torch.nn.Module):
 
             validsigma = self.feature2density(sigma_feature)
             sigma[ray_valid] = validsigma
-
-            # weights = weights[:weights.shape[0]//2,:].reshape(xyz_sampled.shape[0], xyz_sampled.shape[1], weights.shape[-1])
-
-            # outside  = weights.sum(dim=-1) < 0.001
-            # inside = ~ outside
-
-            # sigma[outside] = -0.000
-            # sigma[inside] = 0.2;
+            
             if not self.data_preparation and save_npz:
                 save_npz["sigma"] = sigma.cpu().numpy()
             # print("sigma", sigma.grad_fn)

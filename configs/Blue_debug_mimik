@@ -1,13 +1,13 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Blue_debug_mimik
+expname =  Blue_debug_mimik_new
 basedir = "./#refreshlog"
 #basedir = "./#log_trash"
-add_timestamp = 0
+add_timestamp = 1
 local_batching = 0
 
 caster = direct_map
-use_gt_skeleton = 1
+use_gt_skeleton = 0
 free_opt2 = 1 # direct_map
 free_opt3 = 1
 
@@ -36,7 +36,7 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 n_iters = 300000
 #batch_size = 4096
 batch_size = 512
-test_batch_size = 2048
+test_batch_size = 1024
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3
