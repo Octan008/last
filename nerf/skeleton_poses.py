@@ -5,7 +5,7 @@ from .render_util import *
 
 
 class LearnSkeletonPose(nn.Module):
-    def __init__(self, num_frames, num_joints, learn=True, init_c2w=None, type="euler", para_pose = None):
+    def __init__(self, num_frames, num_joints, learn=True, init_c2w=None, type="euler", para_pose = None, use_tail = False):
         """
         :param num_cams:
         :param learn_R:  True/False
@@ -14,6 +14,7 @@ class LearnSkeletonPose(nn.Module):
         """
         super(LearnSkeletonPose, self).__init__()
         self.num_frames = num_frames
+        self.use_tail = use_tail
         self.init_c2w = None
         if init_c2w is not None:
             self.init_c2w = nn.Parameter(init_c2w, requires_grad=False)
@@ -68,9 +69,10 @@ class LearnSkeletonPose(nn.Module):
         #     return self.pins_dict[frame_id.item()].squeeze()
         if self.type == "euler":
             res = self.pose[frame_id].squeeze()
-            with torch.no_grad():
-                for t in self.tails:
-                    res[t] = 0
+            if not self.use_tail:
+                with torch.no_grad():
+                    for t in self.tails:
+                        res[t] = 0
             return res  # (j, 3, ) axis-angle
         if self.type == "para_six":
             res = self.pose[frame_id].squeeze()

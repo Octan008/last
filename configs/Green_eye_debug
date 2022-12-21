@@ -8,6 +8,7 @@ local_batching = 0
 
 caster = mlp
 use_gt_skeleton = 0
+free_opt5 = 1
 #free_opt2 = 1 # direct_map
 JOKE = 0
 #free_opt3 = 1

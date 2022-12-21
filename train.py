@@ -351,6 +351,7 @@ def reconstruction(args):
 
 
 def skeleton_optim(rank, args, n_gpu = 1):
+    torch.backends.cudnn.benchmark = True
 
     rank_diff = rank - rank_criteria
     os.environ['CUDA_VISIBLE_DEVICES'] = str(rank)
@@ -490,7 +491,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
 
     
-    skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type=args.pose_type)
+    skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type=args.pose_type, use_tail=  args.free_opt7)
     if args.free_opt4:
         skeleton.refresh()
         tfs = skeleton.get_listed_global_transforms()
@@ -802,9 +803,16 @@ def skeleton_optim(rank, args, n_gpu = 1):
             with torch.cuda.amp.autocast(): 
                 if args.free_opt2:
                     tensorf.set_tmp_animframe_index(allanimframes[itr+num_frames*rank_diff])
+
+                start = time.time()
                 rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                                         N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
+                print("render time", time.time() - start)
+
+
+                start = time.time()
                 loss = torch.mean((rgb_map - rgb_train) ** 2)
+                print("loss time", time.time() - start)
 
                 if torch.isnan(loss):
                     raise ValueError("Loss is NaN")
@@ -886,11 +894,14 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
                 optimizer.zero_grad()
 
+                start = time.time()
+
                 if mix_precision:
                     scaler.scale(total_loss).backward()
                 else:
                     # print(total_loss)
                     total_loss.backward()
+                print("backward time", time.time() - start)
                 
                 
 

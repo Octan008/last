@@ -147,53 +147,72 @@ class MLPCaster(CasterBase):
         self.interface_dim = interface_dim
         self.use_interface = use_interface
         self.skeleton_dim = dim
+        self.output_dim = 1
+        self.matmul_func = partial(lambda x, y : torch.matmul(x,y))
 
         
         self.encoder, self.in_dim = get_encoder(self.encoding, desired_resolution=2048 * self.bound, multires=6)
+        self.encoder = self.encoder.to(device)
+        self.encoder = torch.jit.script(self.encoder)
         
         if use_interface:
             self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=self.use_bias).to(device)
         else:
             self.interface_dim = self.in_dim
+            self.interface_dim = self.in_dim * self.skeleton_dim
+            self.output_dim = self.output_dim * self.skeleton_dim
 
-        self.encoder = self.encoder.to(device)
+        
 
-        if self.if_use_ffmlp:
-            self.weight_nets = []
-            for i in range(dim):
-                self.weight_nets.append(
-                    FFMLP(
+        self.weight_nets =  py_FFMLP(
                         # input_dim=self.in_dim, 
                         input_dim=self.interface_dim, 
                         # input_dim=3, 
-                        output_dim=1 + self.geo_feat_dim,
-                        hidden_dim=self.hidden_dim,
-                        num_layers=self.num_layers,
-                    ).to(device)
-                )
-            self.weight_nets = nn.ModuleList(self.weight_nets)
-        else:
-            self.weight_nets = []
-            for i in range(dim):
-
-                self.weight_nets.append(
-                    py_FFMLP(
-                        # input_dim=self.in_dim, 
-                        input_dim=self.interface_dim, 
-                        # input_dim=3, 
-                        output_dim=1 + self.geo_feat_dim,
+                        output_dim=self.output_dim,
                         hidden_dim=self.hidden_dim,
                         num_layers=self.num_layers,
                         device = device
                     ).to(device)
-                )
-            self.weight_nets = nn.ModuleList(self.weight_nets)
+        self.weight_nets = torch.jit.script(self.weight_nets)
+
+        # if self.if_use_ffmlp:
+        #     self.weight_nets = []
+        #     for i in range(dim):
+        #         self.weight_nets.append(
+        #             FFMLP(
+        #                 # input_dim=self.in_dim, 
+        #                 input_dim=self.interface_dim, 
+        #                 # input_dim=3, 
+        #                 output_dim=1 + self.geo_feat_dim,
+        #                 hidden_dim=self.hidden_dim,
+        #                 num_layers=self.num_layers,
+        #             ).to(device)
+        #         )
+        #     self.weight_nets = nn.ModuleList(self.weight_nets)
+        # else:
+        #     self.weight_nets = []
+        #     for i in range(dim):
+        #         pyffmlp =  py_FFMLP(
+        #                 # input_dim=self.in_dim, 
+        #                 input_dim=self.interface_dim, 
+        #                 # input_dim=3, 
+        #                 output_dim=1 + self.geo_feat_dim,
+        #                 hidden_dim=self.hidden_dim,
+        #                 num_layers=self.num_layers,
+        #                 device = device
+        #             ).to(device)
+        #         scripted_block = torch.jit.script(pyffmlp)
+        #         self.weight_nets.append(
+        #             scripted_block
+        #         )
+        #     self.weight_nets = nn.ModuleList(self.weight_nets)
 
 
 
     def mlp_branch(self, x, i = None, func = None):
         x = x.view(-1, 3)
-        tmp = self.encoder(x, bound=self.bound)
+        # tmp = self.encoder(x, bound=self.bound)
+        tmp = self.encoder(x)
         if self.use_interface:
             tmp = self.interface_layer(tmp)
             
@@ -205,6 +224,26 @@ class MLPCaster(CasterBase):
         sigma = F.relu(h[..., 0])
 
         return sigma
+
+    @torch.cuda.amp.autocast(enabled=True)
+    def concate_mlp(self, x):
+        # x: [J, N, 3], in [-bound, bound]
+        start = time.time()
+        # tmp = self.encoder(x, bound=self.bound)
+        tmp = self.encoder(x)
+        print("encoder time: ", time.time() - start)
+
+
+        start = time.time()
+        tmp =tmp.permute(1,0,2).contiguous().view(-1, self.interface_dim)
+        print("permute time: ", time.time() - start)
+        start = time.time()
+        h = self.weight_nets(tmp)
+        print("mlp time: ", time.time() - start)
+        sigma = F.relu(h)
+        sigma = sigma.view(self.skeleton_dim, -1)
+        return sigma
+
     
 
     
@@ -241,30 +280,59 @@ class MLPCaster(CasterBase):
 
     # @torch.cuda.amp.autocast(enabled=True)
     def warp_points(self, points, transforms, viewdirs = None):
-        weights = self.compute_weights(points.view(-1, 3), transforms)
+        start = time.time()
+        points = torch.cat([points, torch.ones(points.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
+        # points = torch.cat([points, torch.ones(1).expand(points.shape[:-1]).unsqueeze(-1)], dim=-1)#[samples, 4]
+        weights = self.compute_weights(points.view(-1, 4), transforms)
+        print('compute_weights', time.time() - start)
         self.weights = weights
         self.cache_transforms = transforms
         self.restore_xyz = points
 
+        start = time.time()
         if viewdirs is not None:
+            start = time.time()
             weights = torch.cat([weights, weights], dim=0)
-            subjects = torch.cat([points.view(-1, 3),(points-viewdirs).view(-1, 3)], dim=0)
+            print('weights', time.time() - start)
+            start = time.time()
+            viewdirs = torch.cat([viewdirs, torch.zeros(viewdirs.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
+            print('viewdirs', time.time() - start)
+            start = time.time()
+            subjects = torch.cat([points.view(-1, 4),(points-viewdirs).view(-1, 4)], dim=0)
+            print('subjects', time.time() - start)
             # transforms = torch.cat([transforms, transforms], dim=0)
         else:
-            subjects = points.reshape(-1, 3)
+            subjects = points.reshape(-1, 4)
+        print('subjects', time.time() - start)
 
-        return weighted_transformation(subjects, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+        start = time.time()
+        result =  weighted_transformation(subjects, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+        print('weighted_transformation', time.time() - start)
+        return result
     
     # @torch.cuda.amp.autocast(enabled=True)
     def compute_weights(self, xyz, transforms,  features=None, locs=None):       
-        xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
+        start = time.time()
+        # xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
         if self.args.use_indivInv:
             invs = transforms
         else:
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
+        print("time for affine_inverse_batch", time.time() - start)
+
+        start = time.time()
+        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        print("time for functorch.vmap", time.time() - start)
+
+        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
+        start = time.time()
         result = self.normalize_coord(result[:,:,:3])
-        bwf = self.mlp(result) # [j,sample]
+        print("time for self.mlp", time.time() - start)
+        # bwf = self.mlp(result) # [j,sample]
+
+        start = time.time()
+        bwf = self.concate_mlp(result) # [j,sample]
+        print("time for self.mlp", time.time() - start)
         return bwf.permute(1,0)
         
     # @torch.cuda.amp.autocast(enabled=True)

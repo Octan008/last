@@ -11,6 +11,8 @@ import math
 import json
 import copy
 from .provider import *
+from functools import partial
+import functorch
 
 import time
 
@@ -21,20 +23,33 @@ my_torch_device = "cuda"
 def clip_weight(val, thresh = 1e-4, min=0, max=1):
     return 1-torch.clamp((1-val*(1.0/thresh)), min=min, max=max)
 
+# #@torch.jit.script
+# def affine_inverse_batch(bmatrix, device="cuda"):
+#     # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+#     # inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
+#     # inv[:,:3, 3] = torch.bmm(torch.transpose(bmatrix[:,:3,:3], 1, 2), -bmatrix[:,:3,3].unsqueeze(-1)).squeeze()
+#     eye = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+
+#     rot = bmatrix[:,:3,:3].permute(0,2,1)
+#     trans = torch.matmul(rot, -bmatrix[:,:3,3].unsqueeze(-1))
+
+#     inv = torch.cat([torch.cat([rot, trans], dim=-1), eye[:,3:,:]], dim=1)
+#     return inv
+
 @torch.jit.script
-def affine_inverse_batch(bmatrix, device="cuda"):
+def affine_inverse_batch(bmatrix):
     # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
     # inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
     # inv[:,:3, 3] = torch.bmm(torch.transpose(bmatrix[:,:3,:3], 1, 2), -bmatrix[:,:3,3].unsqueeze(-1)).squeeze()
-    eye = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+    # eye = torch.eye(4, device = "cuda:0").unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
 
     rot = bmatrix[:,:3,:3].permute(0,2,1)
     trans = torch.matmul(rot, -bmatrix[:,:3,3].unsqueeze(-1))
 
-    inv = torch.cat([torch.cat([rot, trans], dim=-1), eye[:,3:,:]], dim=1)
+    inv = torch.cat([torch.cat([rot, trans], dim=-1), torch.tensor([0,0,0,1], device = "cuda:0").view(1,1,-1).expand(rot.shape[0], -1, -1)], dim=1)
     return inv
 
-@torch.jit.script
+#@torch.jit.script
 def affine_inverse(matrix, device="cuda"):
     # inv = torch.eye(4, device=matrix.device)
     # # inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
@@ -46,7 +61,7 @@ def affine_inverse(matrix, device="cuda"):
     return inv
 #https://qiita.com/harmegiddo/items/96004f7c8eafbb8a45d0#%E3%82%AA%E3%82%A4%E3%83%A9%E3%83%BC%E8%A7%92
 
-@torch.jit.script
+#@torch.jit.script
 def quaternion_to_matrix_batch(q):
     #[J, 4]
     w, x, y, z= torch.transpose(q, 0, 1)
@@ -66,7 +81,7 @@ def quaternion_to_matrix_batch(q):
     ], dim=1)
     #[4,4,J]
 
-@torch.jit.script
+#@torch.jit.script
 def quaternion_to_matrix(q):
     w, x, y, z= q
     return torch.cat([
@@ -79,7 +94,7 @@ def quaternion_to_matrix(q):
         [0.0,0.0,0.0,1.0], device=q.device
     ).unsqueeze(1)], dim=1)
 
-@torch.jit.script
+#@torch.jit.script
 def euler_to_quaternion(r):
     sx, sy, sz = torch.sin(torch.deg2rad(r/2.0))
     cx, cy, cz = torch.cos(torch.deg2rad(r/2.0))
@@ -90,7 +105,7 @@ def euler_to_quaternion(r):
         cy*cx*sz + sy*sx*cz
     ],dim=0)
     
-@torch.jit.script
+#@torch.jit.script
 def compute_weights(xyzs, joints):
     #xyzs, reshaped(-1,3)
     weights_list = []
@@ -119,71 +134,56 @@ def compute_weights(xyzs, joints):
     return torch.transpose(weights_list, 0, 1)
 
 
-# @torch.cuda.amp.autocast(enabled=True)
-@torch.jit.script
-def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = True):
+@torch.cuda.amp.autocast(enabled=True)
+def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool = True):
     #xyzs -> [N, 3]
     #weights -> [N, J]
     #transforms -> [J, 4, 4]
     #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
     
+    start = time.time()
     weights_sum = weights.sum(dim=1)
-    # print("minmax",torch.max(weights), torch.min(weights))
-    # print("minmax",torch.max(weights_sum), torch.min(weights_sum))
     n_sample = xyzs.shape[0]
-    n_joint = transforms.shape[0]
+    # n_joint = transforms.shape[0]
     eps = 1e-7
-    non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
+    # non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
 
-    valid = ~non_valid
-    valid_2 = weights_sum > eps
-    # validT = torch.transpose(valid, 0, 1);
-    # underOne = weights_sum < 1.0
-
-    # original_weights = torch.where(~underOne, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-    # weights_sum =  torch.where(weights_sum < eps, torch.ones_like(weights_sum), weights_sum)
-    # weights_sum =  torch.where(weights_sum < 1.0, torch.ones_like(weights_sum), weights_sum)
-    # weights_sum =  torch.where(underOne, torch.ones_like(weights_sum), weights_sum)
+    # valid = ~non_valid
+    # valid_2 = weights_sum > eps
 
     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
-    num_j = weights.shape[1]
-    # print(valid.shape, weights.shape, weights_sum.shape)
-    # if torch.isnan(weights).any() or torch.isinf(weights).any():
-    #     print("beforezerodiv", torch.isnan(weights).any(),  torch.isinf(weights).any())
-    #     raise ValueError("nan or inf in weights")
-    softmax = False
-    if softmax:
-        m = nn.Softmax(dim=1)
-        weights = m(weights)
-    else:
-        weights_sum = torch.clamp(weights_sum, min=eps)
-        weights = weights/weights_sum.unsqueeze(1)
-        # weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
-    # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-    # if torch.isnan(weights).any() or torch.isinf(weights).any():
-    #     raise ValueError("faterzerodiv"+"nan or inf in weights")
-        
+    # num_j = weights.shape[1]
+    # softmax = False
+    # if softmax:
+    #     m = nn.Softmax(dim=1)
+    #     weights = m(weights)
+    # else:
+    weights_sum = torch.clamp(weights_sum, min=eps)
+    weights = weights/weights_sum.unsqueeze(1)
+    print("time1", time.time() - start)
 
-    xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
+    # start = time.time()
+    # xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
+    # print("time1.5", time.time() - start)
 
-    # tmp = torch.matmul(transforms, torch.matmul(weights.unsqueeze(-1), xyzs.unsqueeze(1)).permute(1,2,0)).sum(dim=0).squeeze()
+    
     # transforms : [J, 4, 4]
     # weights : [N, J]
     # xyzs : [N, 4]
-    # print("fdfsa", torch.matmul(weights, transforms.reshape(transforms.shape[0], -1)).shape)
+
+    
     if if_transform_is_inv:
         tmp = torch.matmul(torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4), xyzs.unsqueeze(-1))
     else:
-        # print("not implemented")
-        # exit("not inv")
-        # t2 = affine_inverse_batch(transforms)
-        # tmp2 = torch.matmul(weights, t2.reshape(transforms.shape[0], -1)).reshape(n_sample, 4, 4)
+        start = time.time()
         tmp = torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4)
+        print("time2", time.time() - start)
+        start = time.time()
         tmp = affine_inverse_batch(tmp)
-        # print("tmp-tmp2", torch.sum(tmp-tmp2))
-        # print("trans-t2", torch.sum(transforms-t2))
-        # exit("インバース問題は正しかったのか？")
+        print("time3", time.time() - start)
+        start = time.time()
         tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
+        print("time4", time.time() - start)
     result = tmp.squeeze()[...,:3]
 
     # result = result * weights_sum.unsqueeze(-1) + xyzs[..., :3] * (1-weights_sum.unsqueeze(-1))
@@ -1044,7 +1044,7 @@ class Joint():
         return affine_inverse_batch(self.rotations_to_transforms_fast(poses, type=type))
 
 
-    @torch.jit.script
+    #@torch.jit.script
     def rotations_to_transforms_fast(self, poses, type="quaternion"):
         # print(poses.shape, type)
         # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)

@@ -125,7 +125,7 @@ class BlenderDataset(Dataset):
             
 
 
-            # rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
+            rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
             # mouse_pos = torch.tensor([0,0,0])
             # mosuse_dir = mouse_pos - rays_o[0]
             # mosuse_dir = mosuse_dir / torch.norm(mosuse_dir, dim=-1, keepdim=True)
