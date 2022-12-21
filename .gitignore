@@ -4,6 +4,8 @@
 log/
 refreshlog/
 log_trash/
+#refreshlog/
+#log_trash/
 log_oldall_old/
 strage_log/
 cabin/
