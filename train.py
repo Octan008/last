@@ -387,6 +387,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
     os.makedirs(f'{logfolder}/imgs_rgba', exist_ok=True)
     os.makedirs(f'{logfolder}/rgba', exist_ok=True)
     summary_writer = SummaryWriter(logfolder)
+    f = open(f'{logfolder}/args.txt', 'a')
+    f.writelines(str(args))
+    f.close()
 
 
 
@@ -469,6 +472,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
     tensorf.set_skeleton(skeleton)
     tensorf.set_skeletonmode()
 
+    if args.free_opt6:
+        print(skeleton.get_listed_names())
+        print(skeleton.get_listed_positions())
+        exit()
+
     # frames = json.load(open(animation_conf, 'r'))["frames"]
 
     num_frames = len(train_dataset.frame_poses)
@@ -534,10 +542,10 @@ def skeleton_optim(rank, args, n_gpu = 1):
     elif args.caster == "mlp":
         if args.free_opt1:
             pCaster_origin = MLPCaster_integrate(len(joints), device, args=args)
+        elif args.free_opt5:
+            pCaster_origin = MLPCaster(len(joints), device, args = args, use_interface=False, use_ffmlp=False)
         else:
             pCaster_origin = MLPCaster(len(joints), device, args = args)
-        # pCaster_origin = MLPCaster_tcnn(len(joints), device)
-        # pCaster_origin = MLPCaster_net(len(joints), device)
     elif args.caster == "forward":
         tensorf.forward_caster_mode = True
         pCaster_origin = DistCaster()
@@ -638,8 +646,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         ]
         # print(list(pCaster_origin.weight_nets.parameters()))
         # exit()
-
-        params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        if not args.free_opt5:
+            params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         # if args.free_opt1:
         #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         if not args.use_gt_skeleton:
@@ -660,6 +668,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
             ]
 
             params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':1e-4})
+            
             params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
             # if args.free_opt1:
             #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
@@ -827,14 +836,23 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # loss *= 0.0001
                     # total_loss += rest_loss
                 if args.free_opt3:
-                    num_sample = 10000
-                    if args.free_opt3:
+                    if args.caster == "mlp":
                         num_sample = 1000
-                    eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
-                    raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                    eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                    eloss = eloss.sum(-1).mean() * 0.01
-                    total_loss += eloss
+                        eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
+                        raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        eloss = eloss.sum(-1).mean() * 0.01
+                        total_loss += eloss
+
+                    else:
+                        num_sample = 10000
+                        eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
+                        raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        eloss = eloss.sum(-1).mean() * 0.01
+                        total_loss += eloss
+
+                        
 
                     # eloss, idx = pCaster_origin.compute_elastic_loss()
                     # # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)

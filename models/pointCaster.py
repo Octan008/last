@@ -127,24 +127,35 @@ class DistCaster(CasterBase):
 
 # @torch.cuda.amp.autocast(enabled=True)
 class MLPCaster(CasterBase):
-    def __init__(self, dim, device, args = None, use_ffmlp = False):
+    def __init__(self, dim, device, args = None, use_ffmlp = False,
+        encoding = "frequency", num_layers=2, hidden_dim=64, bound=1.0, use_bias = False, interface_dim = 32, use_interface = True
+        ):
         super().__init__(args = args)
-        encoding="hashgrid"
-        encoding = "frequency"
-        self.num_layers=2
-        self.hidden_dim=64
-        self.bound=1.0
-        self.hidden_dim = int(self.hidden_dim)
+
+
+        self.encoding = encoding
+        self.num_layers=num_layers
+        self.hidden_dim=hidden_dim
+        self.bound=bound
+        # self.hidden_dim = int(self.hidden_dim)
 
         self.if_use_ffmlp = use_ffmlp
 
         # sigma network
         self.geo_feat_dim = 0
+        self.use_bias = use_bias
+        self.interface_dim = interface_dim
+        self.use_interface = use_interface
+        self.skeleton_dim = dim
 
         
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * self.bound, multires=6)
-        self.interface_dim = 32
-        self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=False).to(device)
+        self.encoder, self.in_dim = get_encoder(self.encoding, desired_resolution=2048 * self.bound, multires=6)
+        
+        if use_interface:
+            self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=self.use_bias).to(device)
+        else:
+            self.interface_dim = self.in_dim
+
         self.encoder = self.encoder.to(device)
 
         if self.if_use_ffmlp:
@@ -177,20 +188,37 @@ class MLPCaster(CasterBase):
                     ).to(device)
                 )
             self.weight_nets = nn.ModuleList(self.weight_nets)
-            
 
+    def mlp_branch(self, x, i = None, func = None):
+        x = x.view(-1, 3)
+        tmp = self.encoder(x, bound=self.bound)
+        if self.use_interface:
+            tmp = self.interface_layer(tmp)
+            
+        if i is not None:   
+            h = self.weight_nets[i](tmp)
+        else:
+            h = func(tmp)
+
+        sigma = F.relu(h[..., 0])
+
+        return sigma
+        
     @torch.cuda.amp.autocast(enabled=True)
-    def density(self, x):
+    def mlp(self, x):
         # x: [J, N, 3], in [-bound, bound]
+        # x = x.view(self.skeleton_dim, -1, 3)
         res = []
         for i in range(len(self.weight_nets)):
-            tmp = self.encoder(x[i], bound=self.bound)
-            tmp = self.interface_layer(tmp)
-            h = self.weight_nets[i](tmp)
+            res.append(self.mlp_branch(x[i], i))
+            # tmp = self.encoder(x[i], bound=self.bound)
+            # if self.use_interface:
+            #     tmp = self.interface_layer(tmp)
+            # h = self.weight_nets[i](tmp)
 
-            sigma = F.relu(h[..., 0])
+            # sigma = F.relu(h[..., 0])
 
-            res.append(sigma)
+            # res.append(sigma)
         return torch.stack(res, dim=0)
 
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
@@ -200,16 +228,6 @@ class MLPCaster(CasterBase):
 
         tmp = self.warp_points(xyz_sampled,  transforms, viewdirs = viewdirs)
 
-        # #points to weights
-        # weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
-        # self.weights = weights
-        # weights = torch.cat([weights, weights], dim=0)
-
-        # #points to new points
-        # tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
-        # tmp =  weighted_transformation(tmp, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
-
-
         # after care
         xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
         xyz_sampled = xyz_sampled.view(shape)
@@ -217,7 +235,7 @@ class MLPCaster(CasterBase):
 
         return xyz_sampled, viewdirs
 
-    @torch.cuda.amp.autocast(enabled=True)
+    # @torch.cuda.amp.autocast(enabled=True)
     def warp_points(self, points, transforms, viewdirs = None):
         weights = self.compute_weights(points.view(-1, 3), transforms)
         self.weights = weights
@@ -233,24 +251,31 @@ class MLPCaster(CasterBase):
 
         return weighted_transformation(subjects, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
     
-    @torch.cuda.amp.autocast(enabled=True)
+    # @torch.cuda.amp.autocast(enabled=True)
     def compute_weights(self, xyz, transforms,  features=None, locs=None):       
         xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
         if self.args.use_indivInv:
             invs = transforms
         else:
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
         result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
         result = self.normalize_coord(result[:,:,:3])
-        bwf = self.density(result) # [j,sample]
+        bwf = self.mlp(result) # [j,sample]
         return bwf.permute(1,0)
         
-    @torch.cuda.amp.autocast(enabled=True)
-    def compute_jacobian(self, points):
+    # @torch.cuda.amp.autocast(enabled=True)
+    def compute_warp_jacobian(self, points):
         func = partial(self.warp_points, transforms = self.cache_transforms)
         return functorch.vmap(functorch.jacfwd(func))(points)
-        # return torch.autograd.functional.jacobian(func, points, create_graph=True, vectorize=True)
+
+    # @torch.cuda.amp.autocast(enabled=True)
+    def compute_weights_grad(self, points):
+        points = points.unsqueeze(0).expand(self.skeleton_dim, -1, -1)
+        # ids = torch.arange(self.skeleton_dim, dtype=torch.int64).to(points.device)
+        func = partial(lambda x : self.mlp(x=x).squeeze())
+        return functorch.vjp(func, points)[0]
+        # 
+        # return functorch.vmap(functorch.vjp(func), in_dims = 0)(points)
 
     @torch.cuda.amp.autocast(enabled=True)
     def compute_elastic_loss(self, num_sample = -1):
@@ -261,10 +286,25 @@ class MLPCaster(CasterBase):
             idx = torch.randint(0, points_shape[0], size=[num_sample], device=points.device)
             points = torch.index_select(points, 0, idx)
 
-        jacobian = self.compute_jacobian(points.contiguous())
+        jacobian = self.compute_warp_jacobian(points.contiguous())
         __, svals, __ = torch.svd(jacobian.to(torch.float32), compute_uv=False)
         log_svals = torch.log(svals.to(torch.float16)+1e-6)
         residual = torch.sum(log_svals**2, dim=-1)
+
+        return self.scale_loss(residual, scale = 0.5), idx
+
+    @torch.cuda.amp.autocast(enabled=True)
+    def compute_weight_elastic_loss(self, num_sample = -1):
+        points = self.restore_xyz[:,:].reshape(-1, 3)
+        points_shape  = points.shape
+        idx = None
+        if num_sample > 0:
+            idx = torch.randint(0, points_shape[0], size=[num_sample], device=points.device)
+            points = torch.index_select(points, 0, idx)
+
+        grad = self.compute_weights_grad(points.contiguous())
+        log_grad = torch.log(grad.to(torch.float16)+1e-6)
+        residual = torch.sum(log_grad**2, dim=0)
 
         return self.scale_loss(residual, scale = 0.5), idx
 

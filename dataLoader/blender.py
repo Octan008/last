@@ -40,6 +40,8 @@ class BlenderDataset(Dataset):
         self.center = torch.mean(self.scene_bbox, axis=0).float().view(1, 1, 3)
         self.radius = (self.scene_bbox[1] - self.center).float().view(1, 1, 3)
         self.downsample=downsample
+        self.focus_mode = None
+        self.focus_vec = None
 
     def read_depth(self, filename):
         depth = np.array(read_pfm(filename)[0], dtype=np.float32)  # (800, 800)
@@ -50,6 +52,12 @@ class BlenderDataset(Dataset):
             for j in skeleton.get_children():
                 apply_animation(pose, j)
             self.frame_skeleton_pose.append(skeleton.get_listed_rotations().clone())
+
+    def set_focus_mode(self, vec, focus_mode=True):
+        if vec is None:
+            vec = [0,0,0]
+        self.focus_mode = focus_mode
+        self.focus_vec = torch.tensor(vec).float().view(1, 1, 3)
         
 
 
@@ -118,6 +126,23 @@ class BlenderDataset(Dataset):
 
 
             rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
+            
+            # mouse_pos = torch.tensor([0,0,0])
+            # mosuse_dir = mouse_pos - rays_o[0]
+            # mosuse_dir = mosuse_dir / torch.norm(mosuse_dir, dim=-1, keepdim=True)
+            # dot = torch.sum(rays_d * mosuse_dir, dim=-1, keepdim=True)
+            # id = torch.argmax(dot)
+            # minih, miniw = 100,100
+            # l_minih = torch.max(0, id[0]-minih)
+            # r_minih = torch.min(h, id[0]+minih)
+            # l_miniw = torch.max(0, id[1]-miniw)
+            # r_miniw = torch.min(w, id[1]+miniw)
+
+            # a = torch.meshgrid(torch.arange(l_minih, r_minih), torch.arange(l_miniw, r_miniw))
+            # mouse_ray = rays_d.select_index(a)
+            # print(rays_o.shape, rays_d.shape)
+            # exit()
+
             self.all_rays += [torch.cat([rays_o, rays_d], 1)]  # (h*w, 6)
 
         # exit("blender")

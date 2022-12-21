@@ -34,9 +34,13 @@ def affine_inverse_batch(bmatrix, device="cuda"):
     return inv
 
 def affine_inverse(matrix, device="cuda"):
-    inv = torch.eye(4, device=matrix.device)
-    inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
-    inv[:3, 3] = torch.mv(torch.transpose(matrix[:3,:3], 0, 1), -matrix[:3,3])
+    # inv = torch.eye(4, device=matrix.device)
+    # # inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
+    # inv[:3,:3] = matrix[:3,:3].permute(1,0)
+    # inv[:3, 3] = torch.mv(matrix[:3,:3].permute(1,0), -matrix[:3,3])
+    rot = matrix[:3,:3].permute(1,0)
+    trans = torch.mv(rot, -matrix[:3,3])
+    inv = torch.cat([torch.cat([rot, trans], dim=-1), torch.tensor([0,0,0,1]).to(matrix.device)], dim=1)
     return inv
 #https://qiita.com/harmegiddo/items/96004f7c8eafbb8a45d0#%E3%82%AA%E3%82%A4%E3%83%A9%E3%83%BC%E8%A7%92
 
@@ -706,10 +710,6 @@ class Joint():
             animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
         elif type=="euler":
             animations = euler_to_matrix_batch(poses, top_batching=True)
-        # # print(animations.shape, translates.shape, poses.shape)
-        # print(animations[...,:3,:3] - tmp[...,:3,:3])
-        # # print(animations[...,:3,3] - translates)
-        # exit()
 
         animations[:,:3,3] = translates
         self.precomp_forward_global_transforms = animations
@@ -731,13 +731,7 @@ class Joint():
             pose = self.pose_converter(poses[self.id], type) # as radian
         else:
             pose = self.pose_converter(torch.tensor(poses[self.id], dtype=torch.float32, device=torch.device(poses.device)), type)
-        # print("etm: ", time.perf_counter() - etm_start)
-        # apt_start = time.perf_counter()
         self.apply_transform(pose, only_self=True)
-        # del pose
-        # print("apt : ", time.perf_counter() - apt_start)
-        # comp_start = time.perf_counter()
-        
         if parent is not None:
             t = torch.matmul(parent, self.local_transform())
         else:

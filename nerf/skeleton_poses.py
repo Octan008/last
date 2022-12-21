@@ -68,9 +68,9 @@ class LearnSkeletonPose(nn.Module):
         #     return self.pins_dict[frame_id.item()].squeeze()
         if self.type == "euler":
             res = self.pose[frame_id].squeeze()
-            with torch.no_grad():
-                for t in self.tails:
-                    res[t] = 0
+            # with torch.no_grad():
+            #     for t in self.tails:
+            #         res[t] = 0
             return res  # (j, 3, ) axis-angle
         if self.type == "para_six":
             res = self.pose[frame_id].squeeze()

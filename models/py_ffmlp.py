@@ -24,13 +24,13 @@ class py_FFMLP(nn.Module):
 
         self.tensorcore_width = 16
 
-        assert hidden_dim in [16, 32, 64, 128, 256], f"FFMLP only support hidden_dim in [16, 32, 64, 128, 256], but got {hidden_dim}"
-        assert input_dim > 0 and input_dim % 16 == 0, f"FFMLP input_dim should be 16 * m (m  > 0), but got {input_dim}"
-        assert output_dim <= 16, f"FFMLP current only supports output dim <= 16, but got {output_dim}"
-        assert num_layers >= 2, f"FFMLP num_layers should be larger than 2 (3 matmuls), but got {num_layers}"
+        # assert hidden_dim in [16, 32, 64, 128, 256], f"FFMLP only support hidden_dim in [16, 32, 64, 128, 256], but got {hidden_dim}"
+        # assert input_dim > 0 and input_dim % 16 == 0, f"FFMLP input_dim should be 16 * m (m  > 0), but got {input_dim}"
+        # assert output_dim <= 16, f"FFMLP current only supports output dim <= 16, but got {output_dim}"
+        # assert num_layers >= 2, f"FFMLP num_layers should be larger than 2 (3 matmuls), but got {num_layers}"
         
         # pad output
-        self.padded_output_dim = int(math.ceil(output_dim / 16)) * 16
+        # self.padded_output_dim = int(math.ceil(output_dim / 16)) * 16
 
         # parameters (continuous in memory)
         self.Network = nn.Sequential().to(device)
@@ -95,22 +95,18 @@ class py_FFMLP(nn.Module):
         #     raise ValueError("error!")
         B, C = inputs.shape
         #assert B >= 128 and B % 128 == 0, f"ffmlp batch size must be 128 * m (m > 0), but got {B}."
-        # if torch.isnan(inputs).any():
-        #     raise ValueError("error!")
+
         # pad input
-        pad = 128 - (B % 128)
-        if pad > 0:
-            inputs = torch.cat([inputs, torch.zeros(pad, C, dtype=inputs.dtype, device=inputs.device)], dim=0)
-        # if torch.isnan(inputs).any():
-        #     raise ValueError("error!")
+        # pad = 128 - (B % 128)
+        # if pad > 0:
+        #     inputs = torch.cat([inputs, torch.zeros(pad, C, dtype=inputs.dtype, device=inputs.device)], dim=0)
+
         # outputs = ffmlp_forward(inputs, self.weights, self.input_dim, self.padded_output_dim, self.hidden_dim, self.num_layers, self.activation, self.output_activation, not self.training, inputs.requires_grad)
         outputs = self.Network(inputs)
-        # if torch.isnan(outputs).any():
-        #     raise ValueError("error!")
+
         # unpad output
-        if B != outputs.shape[0] or self.padded_output_dim != self.output_dim:
-            outputs = outputs[:B, :self.output_dim]
-    
-        #print('outputs', outputs.shape, outputs.dtype, outputs.min().item(), outputs.max().item())
+        # if B != outputs.shape[0] or self.padded_output_dim != self.output_dim:
+        #     outputs = outputs[:B, :self.output_dim]
+
 
         return outputs
