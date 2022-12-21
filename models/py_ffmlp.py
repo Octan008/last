@@ -86,7 +86,7 @@ class py_FFMLP(nn.Module):
         self.Network.apply(func)
     
     
-
+    
     def forward(self, inputs):
         # inputs: [B, input_dim]
         # return: [B, outupt_dim]

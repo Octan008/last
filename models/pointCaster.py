@@ -189,6 +189,8 @@ class MLPCaster(CasterBase):
                 )
             self.weight_nets = nn.ModuleList(self.weight_nets)
 
+
+
     def mlp_branch(self, x, i = None, func = None):
         x = x.view(-1, 3)
         tmp = self.encoder(x, bound=self.bound)
@@ -203,7 +205,9 @@ class MLPCaster(CasterBase):
         sigma = F.relu(h[..., 0])
 
         return sigma
-        
+    
+
+    
     @torch.cuda.amp.autocast(enabled=True)
     def mlp(self, x):
         # x: [J, N, 3], in [-bound, bound]

@@ -1,8 +1,8 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Red_mlp_both_elastic
-#basedir = "./#refreshlog"
-basedir = "./#log_trash"
+expname =  Red_mlp_both_debug
+basedir = "./#refreshlog"
+#basedir = "./#log_trash"
 add_timestamp = 1
 local_batching = 0
 

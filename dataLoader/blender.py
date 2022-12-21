@@ -125,14 +125,15 @@ class BlenderDataset(Dataset):
             
 
 
-            rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
-            
+            # rays_o, rays_d = get_rays(self.directions, c2w)  # both (h*w, 3)
             # mouse_pos = torch.tensor([0,0,0])
             # mosuse_dir = mouse_pos - rays_o[0]
             # mosuse_dir = mosuse_dir / torch.norm(mosuse_dir, dim=-1, keepdim=True)
-            # dot = torch.sum(rays_d * mosuse_dir, dim=-1, keepdim=True)
-            # id = torch.argmax(dot)
+            # dot = torch.sum(rays_d * mosuse_dir, dim=-1, keepdim=True).view(w,h)
+            # id = torch.argmax(dot, keepdim=True)
+            # print(dot.shape, id.shape, id)
             # minih, miniw = 100,100
+            # exit()
             # l_minih = torch.max(0, id[0]-minih)
             # r_minih = torch.min(h, id[0]+minih)
             # l_miniw = torch.max(0, id[1]-miniw)
@@ -140,8 +141,7 @@ class BlenderDataset(Dataset):
 
             # a = torch.meshgrid(torch.arange(l_minih, r_minih), torch.arange(l_miniw, r_miniw))
             # mouse_ray = rays_d.select_index(a)
-            # print(rays_o.shape, rays_d.shape)
-            # exit()
+            
 
             self.all_rays += [torch.cat([rays_o, rays_d], 1)]  # (h*w, 6)
 

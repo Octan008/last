@@ -545,7 +545,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
         elif args.free_opt5:
             pCaster_origin = MLPCaster(len(joints), device, args = args, use_interface=False, use_ffmlp=False)
         else:
-            pCaster_origin = MLPCaster(len(joints), device, args = args)
+            pCaster_origin = MLPCaster(len(joints), device, args = args, use_ffmlp=False)
     elif args.caster == "forward":
         tensorf.forward_caster_mode = True
         pCaster_origin = DistCaster()

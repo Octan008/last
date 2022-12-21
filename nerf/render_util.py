@@ -21,6 +21,7 @@ my_torch_device = "cuda"
 def clip_weight(val, thresh = 1e-4, min=0, max=1):
     return 1-torch.clamp((1-val*(1.0/thresh)), min=min, max=max)
 
+@torch.jit.script
 def affine_inverse_batch(bmatrix, device="cuda"):
     # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
     # inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
@@ -33,6 +34,7 @@ def affine_inverse_batch(bmatrix, device="cuda"):
     inv = torch.cat([torch.cat([rot, trans], dim=-1), eye[:,3:,:]], dim=1)
     return inv
 
+@torch.jit.script
 def affine_inverse(matrix, device="cuda"):
     # inv = torch.eye(4, device=matrix.device)
     # # inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
@@ -44,6 +46,7 @@ def affine_inverse(matrix, device="cuda"):
     return inv
 #https://qiita.com/harmegiddo/items/96004f7c8eafbb8a45d0#%E3%82%AA%E3%82%A4%E3%83%A9%E3%83%BC%E8%A7%92
 
+@torch.jit.script
 def quaternion_to_matrix_batch(q):
     #[J, 4]
     w, x, y, z= torch.transpose(q, 0, 1)
@@ -63,6 +66,7 @@ def quaternion_to_matrix_batch(q):
     ], dim=1)
     #[4,4,J]
 
+@torch.jit.script
 def quaternion_to_matrix(q):
     w, x, y, z= q
     return torch.cat([
@@ -75,6 +79,7 @@ def quaternion_to_matrix(q):
         [0.0,0.0,0.0,1.0], device=q.device
     ).unsqueeze(1)], dim=1)
 
+@torch.jit.script
 def euler_to_quaternion(r):
     sx, sy, sz = torch.sin(torch.deg2rad(r/2.0))
     cx, cy, cz = torch.cos(torch.deg2rad(r/2.0))
@@ -85,7 +90,7 @@ def euler_to_quaternion(r):
         cy*cx*sz + sy*sx*cz
     ],dim=0)
     
-
+@torch.jit.script
 def compute_weights(xyzs, joints):
     #xyzs, reshaped(-1,3)
     weights_list = []
@@ -114,7 +119,8 @@ def compute_weights(xyzs, joints):
     return torch.transpose(weights_list, 0, 1)
 
 
-@torch.cuda.amp.autocast(enabled=True)
+# @torch.cuda.amp.autocast(enabled=True)
+@torch.jit.script
 def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = True):
     #xyzs -> [N, 3]
     #weights -> [N, J]
@@ -1038,7 +1044,7 @@ class Joint():
         return affine_inverse_batch(self.rotations_to_transforms_fast(poses, type=type))
 
 
-
+    @torch.jit.script
     def rotations_to_transforms_fast(self, poses, type="quaternion"):
         # print(poses.shape, type)
         # print(euler_to_matrix_batch(torch.transpose(poses, 0, 1)).permute(2,0,1).shape)
