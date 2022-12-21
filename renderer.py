@@ -37,6 +37,7 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray
         depth_maps.append(depth_map)
     
     return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
+    # return torch.cat(rgbs), None, None, None, None
 
 @torch.no_grad()
 def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prtx='', N_samples=-1,

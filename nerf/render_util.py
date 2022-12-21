@@ -140,8 +140,9 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool 
     #weights -> [N, J]
     #transforms -> [J, 4, 4]
     #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
+    print_time = False
     
-    start = time.time()
+    if print_time  : start = time.time()
     weights_sum = weights.sum(dim=1)
     n_sample = xyzs.shape[0]
     # n_joint = transforms.shape[0]
@@ -160,9 +161,9 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool 
     # else:
     weights_sum = torch.clamp(weights_sum, min=eps)
     weights = weights/weights_sum.unsqueeze(1)
-    print("time1", time.time() - start)
+    if print_time  : print("time1", time.time() - start)
 
-    # start = time.time()
+    # if print_time  : start = time.time()
     # xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
     # print("time1.5", time.time() - start)
 
@@ -175,15 +176,15 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool 
     if if_transform_is_inv:
         tmp = torch.matmul(torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4), xyzs.unsqueeze(-1))
     else:
-        start = time.time()
+        if print_time  : start = time.time()
         tmp = torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4)
-        print("time2", time.time() - start)
-        start = time.time()
+        if print_time  : print("time2", time.time() - start)
+        if print_time  : start = time.time()
         tmp = affine_inverse_batch(tmp)
-        print("time3", time.time() - start)
-        start = time.time()
+        if print_time  : print("time3", time.time() - start)
+        if print_time  : start = time.time()
         tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
-        print("time4", time.time() - start)
+        if print_time  : print("time4", time.time() - start)
     result = tmp.squeeze()[...,:3]
 
     # result = result * weights_sum.unsqueeze(-1) + xyzs[..., :3] * (1-weights_sum.unsqueeze(-1))

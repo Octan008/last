@@ -36,6 +36,7 @@ class CasterBase(nn.Module):
     def __init__(self, args = None):
         super().__init__()
         self.args = args
+        self.print_time = False
 
     def torch_mlp_net(self, input_sequencial, _in_dim, _out_dim, num_layers, hidden_dim, device, if_use_bias = False):
         
@@ -228,18 +229,18 @@ class MLPCaster(CasterBase):
     @torch.cuda.amp.autocast(enabled=True)
     def concate_mlp(self, x):
         # x: [J, N, 3], in [-bound, bound]
-        start = time.time()
+        if self.print_time  : start = time.time()
         # tmp = self.encoder(x, bound=self.bound)
         tmp = self.encoder(x)
-        print("encoder time: ", time.time() - start)
+        if self.print_time  : print("encoder time: ", time.time() - start)
 
 
-        start = time.time()
+        if self.print_time  : start = time.time()
         tmp =tmp.permute(1,0,2).contiguous().view(-1, self.interface_dim)
-        print("permute time: ", time.time() - start)
-        start = time.time()
+        if self.print_time  :print("permute time: ", time.time() - start)
+        if self.print_time  : start = time.time()
         h = self.weight_nets(tmp)
-        print("mlp time: ", time.time() - start)
+        if self.print_time  : print("mlp time: ", time.time() - start)
         sigma = F.relu(h)
         sigma = sigma.view(self.skeleton_dim, -1)
         return sigma
@@ -280,59 +281,59 @@ class MLPCaster(CasterBase):
 
     # @torch.cuda.amp.autocast(enabled=True)
     def warp_points(self, points, transforms, viewdirs = None):
-        start = time.time()
+        if self.print_time  : start = time.time()
         points = torch.cat([points, torch.ones(points.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
         # points = torch.cat([points, torch.ones(1).expand(points.shape[:-1]).unsqueeze(-1)], dim=-1)#[samples, 4]
         weights = self.compute_weights(points.view(-1, 4), transforms)
-        print('compute_weights', time.time() - start)
+        if self.print_time  : print('compute_weights', time.time() - start)
         self.weights = weights
         self.cache_transforms = transforms
         self.restore_xyz = points
 
-        start = time.time()
+        if self.print_time  : start = time.time()
         if viewdirs is not None:
-            start = time.time()
+            if self.print_time  : start = time.time()
             weights = torch.cat([weights, weights], dim=0)
-            print('weights', time.time() - start)
-            start = time.time()
+            if self.print_time  : print('weights', time.time() - start)
+            if self.print_time  : start = time.time()
             viewdirs = torch.cat([viewdirs, torch.zeros(viewdirs.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
-            print('viewdirs', time.time() - start)
-            start = time.time()
+            if self.print_time  : print('viewdirs', time.time() - start)
+            if self.print_time  : start = time.time()
             subjects = torch.cat([points.view(-1, 4),(points-viewdirs).view(-1, 4)], dim=0)
-            print('subjects', time.time() - start)
+            if self.print_time  : print('subjects', time.time() - start)
             # transforms = torch.cat([transforms, transforms], dim=0)
         else:
             subjects = points.reshape(-1, 4)
-        print('subjects', time.time() - start)
+        if self.print_time  : print('subjects', time.time() - start)
 
-        start = time.time()
+        if self.print_time  : start = time.time()
         result =  weighted_transformation(subjects, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
-        print('weighted_transformation', time.time() - start)
+        if self.print_time  : print('weighted_transformation', time.time() - start)
         return result
     
     # @torch.cuda.amp.autocast(enabled=True)
     def compute_weights(self, xyz, transforms,  features=None, locs=None):       
-        start = time.time()
+        if self.print_time  : start = time.time()
         # xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
         if self.args.use_indivInv:
             invs = transforms
         else:
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        print("time for affine_inverse_batch", time.time() - start)
+        if self.print_time  : print("time for affine_inverse_batch", time.time() - start)
 
-        start = time.time()
+        if self.print_time  : start = time.time()
         result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
-        print("time for functorch.vmap", time.time() - start)
+        if self.print_time  : print("time for functorch.vmap", time.time() - start)
 
         # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
-        start = time.time()
+        if self.print_time  : start = time.time()
         result = self.normalize_coord(result[:,:,:3])
-        print("time for self.mlp", time.time() - start)
+        if self.print_time  : print("time for self.mlp", time.time() - start)
         # bwf = self.mlp(result) # [j,sample]
 
-        start = time.time()
+        if self.print_time  : start = time.time()
         bwf = self.concate_mlp(result) # [j,sample]
-        print("time for self.mlp", time.time() - start)
+        if self.print_time  : print("time for self.mlp", time.time() - start)
         return bwf.permute(1,0)
         
     # @torch.cuda.amp.autocast(enabled=True)

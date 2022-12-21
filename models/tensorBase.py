@@ -271,6 +271,7 @@ class TensorBase(torch.nn.Module):
         self.tmp_animframe_index = None
 
         self.forward_caster_mode = False
+        self.print_time = True
         
 
             
@@ -682,7 +683,7 @@ class TensorBase(torch.nn.Module):
             # if torch.isnan(self.frame_pose).any() or torch.isinf(self.frame_pose).any():
             #     raise ValueError("justaftergetweights"+"nan or inf in weights")
 
-            # start = time.time()
+            if self.print_time  : start = time.time()
             if self.args.use_indivInv:
                 transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
             else:
@@ -694,7 +695,7 @@ class TensorBase(torch.nn.Module):
 
             # if torch.isnan(transforms ).any() or torch.isinf(transforms ).any():
             #     raise ValueError("justaftergetweights"+"nan or inf in weights")
-            # print("transform time", time.time()-start)
+            if self.print_time  : print("transform time", time.time()-start)
 
             draw_joints = self.render_jointmask
             if draw_joints:
@@ -727,7 +728,7 @@ class TensorBase(torch.nn.Module):
             # self.caster.set_joints(self.joints)
             if_cast = True
             torch.cuda.empty_cache()
-            start = time.time()
+            if self.print_time  : start = time.time()
             if if_cast:
 
                 # if self.forward_caster_mode:
@@ -743,90 +744,7 @@ class TensorBase(torch.nn.Module):
                     weights_sum = torch.sum(self.caster_weights, dim=1)
                     self.bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
 
-            print("caster time", time.time()-start)
-
-
-                # if self.forward_caster_mode:
-
-                #     # self.caster_weights = self.caster_origin.get_weights()
-                #     effectnum = 50
-                #     rays_d = rays_chunk[:, 3:6]
-                #     rays_o = rays_chunk[:, :3]
-                #     xyz_sampled = xyz_sampled.view(-1, 3)
-                #     k = torch.sum(xyz_sampled.view(1, -1, 3).expand(rays_d.shape[0], -1, -1) *  rays_d.view(-1, 1, 3).expand(-1, xyz_sampled.shape[0], -1), dim=-1)
-                #     op = xyz_sampled.view(1, -1, 3).expand(rays_d.shape[0], -1, -1) - rays_o.view(-1, 1, 3).expand(-1, xyz_sampled.shape[0], -1)
-                #     oh =  rays_d.view(-1, 1, 3).expand(-1, xyz_sampled.shape[0], -1) * k.view(-1, xyz_sampled.shape[0], 1).expand(-1, -1, 3)
-                #     effects =  -torch.norm(op - oh, dim=-1) # rayn, bN
-                #     effect_table, inds = torch.topk(effects, effectnum, dim=-1)# rayn, effectnum
-                #     new_box = torch.gather(xyz_sampled, 0, inds.view(-1, 1).expand(-1, 3)).view(-1, effectnum, 3) # rayn, 50, 3
-
-                #     refference_table = tmp_xyz_sampled.view(tmp_shape).unsqueeze(2).expand(-1,-1,effectnum,-1) #rayn,effectnum, sample, 3
-                #     # refference_table = refference_table.permute(2,0,1,3) #sample, rayn, effectnum, 3
-                #     refference_table = refference_table - new_box.unsqueeze(1).expand(tmp_shape[0], tmp_shape[1], effectnum, 3) #sample, rayn, effectnum, 3
-                    
-                #     refference_table = torch.exp(-0.0005*torch.norm(refference_table, dim=-1)) #sample, rayn, effectnum
-                #     # refference_table = 1.0/torch.norm(refference_table, dim=-1) #sample, rayn, effectnum
-                #     # refference_table = refference_table.permute(1,0,2) #rayn, sample, effectnum
-                #     topk = 1
-                #     effect_table, tmp_inds = torch.topk(refference_table, topk, dim=-1) #rayn, sample, 3
-                #     inds = torch.gather(inds, 1, tmp_inds.view(rays_d.shape[0], -1)).view(rays_d.shape[0], -1, topk) #rayn, sample, 3
-                #     effect_table = effect_table / torch.sum(effect_table, dim=-1, keepdim=True)
-                #     effect_table = effect_table.view(-1,topk)
-                #     del refference_table, tmp_inds, new_box
-                    
-
-                #     #     refference_table = tmp_xyz_sampled.view(-1,3).unsqueeze(1).expand(-1,box.view(-1,3).shape[0],-1) #N, bN, 3
-                #     #     self.caster_weights = self.caster_origin.get_weights()
-                #     #     refference_table = refference_table - xyz_sampled.view(-1,3).unsqueeze(0).expand(refference_table.shape[0],-1,-1) #N, bN, 3
-                #     #     refference_table = torch.exp(-torch.norm(refference_table, dim=-1)) #N, bN
-                #     #     # print("refference_table", refference_table.shape)
-                #     #     effect_table, inds = torch.topk(refference_table, 3, dim=-1) #N, 3
-                #     # del refference_table
-                #     torch.cuda.empty_cache()
-                #     xyz_sampled = self.normalize_coord(xyz_sampled)
-                #     sigma_feature = self.compute_densityfeature(xyz_sampled.view(-1, 3)) #bN, feats
-                #     validsigma = self.feature2density(sigma_feature)                    
-                #     ref_sigmas = torch.gather(validsigma, 0, inds.view(-1)).view(-1, topk)  #N, 3, feats
-
-                #     sigma = torch.sum(ref_sigmas * effect_table, dim=-1) #N
-                #     alpha, weight, bg_weight = raw2alpha(sigma.view(-1, 1), dists.view(-1, 1) * self.distance_scale)#N, 1
-
-                #     app_features = self.compute_appfeature(xyz_sampled.view(-1, 3))   #bN, feats
-                #     ref_app_features = torch.gather(app_features, 0, inds.view(-1).unsqueeze(-1).expand(-1, app_features.shape[1])).view(alpha.shape[0], -1, app_features.shape[1]) #N, 3, feats
-                #     interpolated_app_features = torch.sum(ref_app_features * effect_table.unsqueeze(-1).expand(-1,-1, app_features.shape[1]), dim=1) #N, feats
-                #     # app_mask = weight > self.rayMarch_weight_thres
-                #     app_mask = weight > -1
-                #     app_mask = app_mask.squeeze()
-                #     # print(torch.max(tmp_viewdirs.contiguous().view(-1, 3)), torch.min(tmp_viewdirs.contiguous().view(-1, 3)))
-                #     valid_rgbs = self.renderModule(None, tmp_viewdirs.contiguous().view(-1, 3)[app_mask], interpolated_app_features[app_mask])#.view(tmp_shape)
-                #     app_mask = app_mask.view(tmp_shape[:2])
-                #     rgb[app_mask] = valid_rgbs
-                #     if torch.isnan(rgb).any()or torch.isinf(rgb).any():
-                #         raise ValueError("rgb is nan")
-
-                #     weight = weight.view(tmp_shape[:2])
-
-                #     acc_map = torch.sum(weight, -1)
-                #     rgb_map = torch.sum(weight[..., None] * rgb, -2)
-
-                #     if white_bg or (is_train and torch.rand((1,))<0.5):
-                #         rgb_map = rgb_map + (1. - acc_map[..., None])
-
-                #     rgb_map = rgb_map.clamp(0,1)
-
-                #     with torch.no_grad():
-                #         depth_map = torch.sum(weight * z_vals, -1)
-                #         depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
-
-                #     if not self.data_preparation:
-                #         if draw_joints:
-                #             rgb_map[draw_mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=rgb_map.device)
-                #     if torch.isnan(rgb_map).any() or torch.isinf(rgb_map).any():
-                #         raise ValueError("rgb map is nan")
-
-                #     return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
-
-
+            if self.print_time  : print("caster time", time.time()-start)
                     
 
             save_npz = False;
@@ -836,7 +754,7 @@ class TensorBase(torch.nn.Module):
                 save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
             torch.cuda.empty_cache()
 
-        start = time.time()
+        if self.print_time  : start = time.time()
         if ray_valid.any():
                 
             
@@ -856,7 +774,7 @@ class TensorBase(torch.nn.Module):
             self.sigma = sigma
             # exit("amkingmasking")
             
-        print("sigma_time", time.time() - start)
+        if self.print_time  : print("sigma_time", time.time() - start)
 
 
 
@@ -869,7 +787,7 @@ class TensorBase(torch.nn.Module):
         # print("app_mask", app_mask.shape, app_mask.sum())
 
         # Compute_alpha
-        start = time.time()
+        if self.print_time  : start = time.time()
         if app_mask.any():
             
             app_features = self.compute_appfeature(xyz_sampled[app_mask])    
@@ -909,18 +827,18 @@ class TensorBase(torch.nn.Module):
 
         rgb_map = rgb_map.clamp(0,1)
 
-        # with torch.no_grad():
-        #     depth_map = torch.sum(weight * z_vals, -1)
-        #     depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
+        with torch.no_grad():
+            depth_map = torch.sum(weight * z_vals, -1)
+            depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
 
         if not self.data_preparation:
             if draw_joints:
                 rgb_map[draw_mask] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=rgb_map.device)
 
-        print("rgb_time", time.time() - start)
+        if self.print_time  : print("rgb_time", time.time() - start)
 
-        # return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
-        return rgb_map, None # rgb, sigma, alpha, weight, bg_weight
+        return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
+        # return rgb_map, None # rgb, sigma, alpha, weight, bg_weight
 
     def get_density(self, xyz_sampled):
         #xyz_sampled = xyz_sampled.reshape(-1, 3)
