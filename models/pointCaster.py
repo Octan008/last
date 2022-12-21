@@ -160,53 +160,56 @@ class MLPCaster(CasterBase):
             self.interface_layer = nn.Linear(self.in_dim, self.interface_dim, bias=self.use_bias).to(device)
         else:
             self.interface_dim = self.in_dim
+
+        if args.free_opt8:
             self.interface_dim = self.in_dim * self.skeleton_dim
             self.output_dim = self.output_dim * self.skeleton_dim
 
         
+        if self.args.free_opt8:
+            self.weight_nets =  py_FFMLP(
+                            # input_dim=self.in_dim, 
+                            input_dim=self.interface_dim, 
+                            # input_dim=3, 
+                            output_dim=self.output_dim,
+                            hidden_dim=self.hidden_dim,
+                            num_layers=self.num_layers,
+                            device = device
+                        ).to(device)
+            self.weight_nets = torch.jit.script(self.weight_nets)
+        else:
 
-        self.weight_nets =  py_FFMLP(
-                        # input_dim=self.in_dim, 
-                        input_dim=self.interface_dim, 
-                        # input_dim=3, 
-                        output_dim=self.output_dim,
-                        hidden_dim=self.hidden_dim,
-                        num_layers=self.num_layers,
-                        device = device
-                    ).to(device)
-        self.weight_nets = torch.jit.script(self.weight_nets)
-
-        # if self.if_use_ffmlp:
-        #     self.weight_nets = []
-        #     for i in range(dim):
-        #         self.weight_nets.append(
-        #             FFMLP(
-        #                 # input_dim=self.in_dim, 
-        #                 input_dim=self.interface_dim, 
-        #                 # input_dim=3, 
-        #                 output_dim=1 + self.geo_feat_dim,
-        #                 hidden_dim=self.hidden_dim,
-        #                 num_layers=self.num_layers,
-        #             ).to(device)
-        #         )
-        #     self.weight_nets = nn.ModuleList(self.weight_nets)
-        # else:
-        #     self.weight_nets = []
-        #     for i in range(dim):
-        #         pyffmlp =  py_FFMLP(
-        #                 # input_dim=self.in_dim, 
-        #                 input_dim=self.interface_dim, 
-        #                 # input_dim=3, 
-        #                 output_dim=1 + self.geo_feat_dim,
-        #                 hidden_dim=self.hidden_dim,
-        #                 num_layers=self.num_layers,
-        #                 device = device
-        #             ).to(device)
-        #         scripted_block = torch.jit.script(pyffmlp)
-        #         self.weight_nets.append(
-        #             scripted_block
-        #         )
-        #     self.weight_nets = nn.ModuleList(self.weight_nets)
+            if self.if_use_ffmlp:
+                self.weight_nets = []
+                for i in range(dim):
+                    self.weight_nets.append(
+                        FFMLP(
+                            # input_dim=self.in_dim, 
+                            input_dim=self.interface_dim, 
+                            # input_dim=3, 
+                            output_dim=1 + self.geo_feat_dim,
+                            hidden_dim=self.hidden_dim,
+                            num_layers=self.num_layers,
+                        ).to(device)
+                    )
+                self.weight_nets = nn.ModuleList(self.weight_nets)
+            else:
+                self.weight_nets = []
+                for i in range(dim):
+                    pyffmlp =  py_FFMLP(
+                            # input_dim=self.in_dim, 
+                            input_dim=self.interface_dim, 
+                            # input_dim=3, 
+                            output_dim=1 + self.geo_feat_dim,
+                            hidden_dim=self.hidden_dim,
+                            num_layers=self.num_layers,
+                            device = device
+                        ).to(device)
+                    scripted_block = torch.jit.script(pyffmlp)
+                    self.weight_nets.append(
+                        scripted_block
+                    )
+                self.weight_nets = nn.ModuleList(self.weight_nets)
 
 
 
@@ -236,7 +239,8 @@ class MLPCaster(CasterBase):
 
 
         if self.print_time  : start = time.time()
-        tmp =tmp.permute(1,0,2).contiguous().view(-1, self.interface_dim)
+        # tmp =tmp.permute(1,0,2).view(-1, self.interface_dim)
+        tmp =tmp.view(-1, self.interface_dim)
         if self.print_time  :print("permute time: ", time.time() - start)
         if self.print_time  : start = time.time()
         h = self.weight_nets(tmp)
@@ -254,7 +258,7 @@ class MLPCaster(CasterBase):
         # x = x.view(self.skeleton_dim, -1, 3)
         res = []
         for i in range(len(self.weight_nets)):
-            res.append(self.mlp_branch(x[i], i))
+            res.append(self.mlp_branch(x[:,i], i))
             # tmp = self.encoder(x[i], bound=self.bound)
             # if self.use_interface:
             #     tmp = self.interface_layer(tmp)
@@ -322,7 +326,7 @@ class MLPCaster(CasterBase):
         if self.print_time  : print("time for affine_inverse_batch", time.time() - start)
 
         if self.print_time  : start = time.time()
-        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
         if self.print_time  : print("time for functorch.vmap", time.time() - start)
 
         # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
@@ -332,8 +336,12 @@ class MLPCaster(CasterBase):
         # bwf = self.mlp(result) # [j,sample]
 
         if self.print_time  : start = time.time()
-        bwf = self.concate_mlp(result) # [j,sample]
+        if self.args.free_opt8:
+            bwf = self.concate_mlp(result) # [j,sample]
+        else:
+            bwf = self.mlp(result)
         if self.print_time  : print("time for self.mlp", time.time() - start)
+
         return bwf.permute(1,0)
         
     # @torch.cuda.amp.autocast(enabled=True)
@@ -850,8 +858,8 @@ class shCaster(CasterBase):
         # tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
         tmp = torch.cat([xyz_sampled.view(-1, 3),(xyz_sampled-viewdirs).view(-1, 3)], dim=0)
 
-        if torch.isnan(self.sh_feats).any() or torch.isinf(self.sh_feats).any():
-            raise ValueError("shfeats"+"nan or inf in weights")
+        # if torch.isnan(self.sh_feats).any() or torch.isinf(self.sh_feats).any():
+        #     raise ValueError("shfeats"+"nan or inf in weights")
         
         if self.use_distweight:
             exit()
@@ -862,8 +870,8 @@ class shCaster(CasterBase):
             # exit()
             weights = self.get_SH_vals(xyz_sampled.view(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions(use_cached=True)[...,:3])
 
-        if torch.isnan(weights).any() or torch.isinf(weights).any():
-            raise ValueError("justaftergetweights"+"nan or inf in weights")
+        # if torch.isnan(weights).any() or torch.isinf(weights).any():
+        #     raise ValueError("justaftergetweights"+"nan or inf in weights")
         
     
         self.weights = weights

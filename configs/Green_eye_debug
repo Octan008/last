@@ -1,17 +1,17 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Green_fasten
-#basedir = "./#refreshlog"
-basedir = "./#log_trash"
-add_timestamp = 0
+expname =  Green_mlp_both_debug_concmlp
+basedir = "./#refreshlog"
+#basedir = "./#log_trash"
+add_timestamp = 1
 local_batching = 0
 
 caster = mlp
 use_gt_skeleton = 0
-free_opt5 = 1
 #free_opt2 = 1 # direct_map
 JOKE = 0
-#free_opt3 = 1
+free_opt8 = 1
+free_opt5 = 1
 
 pose_type = euler
 

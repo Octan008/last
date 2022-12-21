@@ -271,7 +271,8 @@ class TensorBase(torch.nn.Module):
         self.tmp_animframe_index = None
 
         self.forward_caster_mode = False
-        self.print_time = True
+        self.print_time = False
+        self.clip_thresh = 1e-3
         
 
             
@@ -430,6 +431,10 @@ class TensorBase(torch.nn.Module):
             length = np.prod(ckpt['alphaMask.shape'])
             alpha_volume = torch.from_numpy(np.unpackbits(ckpt['alphaMask.mask'])[:length].reshape(ckpt['alphaMask.shape']))
             self.alphaMask = AlphaGridMask(self.device, ckpt['alphaMask.aabb'].to(self.device), alpha_volume.float().to(self.device))
+            print("exists alpha volume", self.alphaMask.alpha_volume.shape)
+
+            self.alphaMask.set_device(self.device)
+
         self.load_state_dict(ckpt['state_dict'], strict = False)
     
 
@@ -470,11 +475,12 @@ class TensorBase(torch.nn.Module):
             rate_b = (self.ray_aabb[0] - rays_o) / vec
         t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)
 
-        rng = torch.arange(N_samples)[None].float()
+        rng = torch.arange(N_samples, device = rays_o.device)[None].float()
         if is_train:
             rng = rng.repeat(rays_d.shape[-2],1)
-            rng += torch.rand_like(rng[:,[0]])
-        step = stepsize * rng.to(rays_o.device)
+            rng += torch.rand_like(rng[:,[0]], device = rays_o.device)
+        # step = stepsize * rng.to(rays_o.device)
+        step = stepsize * rng
         interpx = (t_min[...,None] + step)
 
         rays_pts = rays_o[...,None,:] + rays_d[...,None,:] * interpx[...,None]
@@ -625,32 +631,40 @@ class TensorBase(torch.nn.Module):
     def mimik_mode(self, mode):
         self.mimik_mode = mode
 
+    def alpha_mask(self, xyz_sampled):
+        alphas = self.alphaMask.sample_alpha(xyz_sampled)
+        alpha_mask = alphas > 0
+        return alpha_mask
+
+    def aabb_mask(self, xyz_sampled):
+        aabb_mask = (xyz_sampled >= self.aabb[0]).all(-1) & (xyz_sampled <= self.aabb[1]).all(-1)
+        return aabb_mask
+
+
 
     def forward(self, rays_chunk, white_bg=True, is_train=False, ndc_ray=False, N_samples=-1, skeleton_props=None, is_render_only=False):
-        if True:
-            # N_samples *= 10
-            viewdirs = rays_chunk[:, 3:6]
-            if ndc_ray:
-                xyz_sampled, z_vals, ray_valid = self.sample_ray_ndc(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
-                dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
-                rays_norm = torch.norm(viewdirs, dim=-1, keepdim=True)
-                dists = dists * rays_norm
-                viewdirs = viewdirs / rays_norm
-            else:
-                xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
-                dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
-            viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
-            
-            if self.alphaMask is not None and self.data_preparation:
-                self.alphaMask.set_device(self.device)
-                alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
-                alpha_mask = alphas > 0
-                ray_invalid = ~ray_valid
-                ray_invalid[ray_valid] |= (~alpha_mask)
-                ray_valid = ~ray_invalid
+        viewdirs = rays_chunk[:, 3:6]
+        if ndc_ray:
+            xyz_sampled, z_vals, ray_valid = self.sample_ray_ndc(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
+            dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
+            rays_norm = torch.norm(viewdirs, dim=-1, keepdim=True)
+            dists = dists * rays_norm
+            viewdirs = viewdirs / rays_norm
+        else:
+            xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
+            dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
+        viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
+        
+        if self.alphaMask is not None and self.data_preparation:
+            self.alphaMask.set_device(self.device)
+            alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
+            alpha_mask = alphas > 0
+            ray_invalid = ~ray_valid
+            ray_invalid[ray_valid] |= (~alpha_mask)
+            ray_valid = ~ray_invalid
 
-            sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-            rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
+        sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
+        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
 
 
         shape = xyz_sampled.shape
@@ -730,19 +744,18 @@ class TensorBase(torch.nn.Module):
             torch.cuda.empty_cache()
             if self.print_time  : start = time.time()
             if if_cast:
-
-                # if self.forward_caster_mode:
-                #     viewdirs = torch.ones_like(xyz_sampled)
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
                 if self.args.mimik == "cycle":
                     xyz_sampled, viewdirs = self.mimik_caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
 
 
 
-                if not self.args.free_opt2:
-                    self.caster_weights = self.caster_origin.get_weights()
-                    weights_sum = torch.sum(self.caster_weights, dim=1)
-                    self.bg_alpha = clip_weight(weights_sum, thresh = 1e-3).view(shape[0], -1).view(shape[0], -1)
+                # if not self.args.free_opt2:
+                self.caster_weights = self.caster_origin.get_weights()
+                weights_sum = torch.sum(self.caster_weights, dim=1)
+                self.bg_alpha = clip_weight(weights_sum, thresh = self.clip_thresh).view(shape[0], -1).view(shape[0], -1)
+                castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
+                # castweight_mask = weights_sum.view(shape[0], -1) > 0.8
 
             if self.print_time  : print("caster time", time.time()-start)
                     
@@ -756,6 +769,12 @@ class TensorBase(torch.nn.Module):
 
         if self.print_time  : start = time.time()
         if ray_valid.any():
+
+            aabb_mask = self.aabb_mask(xyz_sampled)
+            alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
+            ray_valid = ray_valid & aabb_mask       & alpha_mask     & castweight_mask
+            # ray_valid = ray_valid & alpha_mask
+            # ray_valid = ray_valid & castweight_mask
                 
             
             xyz_sampled = self.normalize_coord(xyz_sampled)
@@ -793,18 +812,6 @@ class TensorBase(torch.nn.Module):
             app_features = self.compute_appfeature(xyz_sampled[app_mask])    
             valid_rgbs = self.renderModule(xyz_sampled[app_mask], viewdirs[app_mask], app_features)
             rgb[app_mask] = valid_rgbs
-            # weight_slice =  weights.reshape(rgb.shape[0], -1, weights.shape[-1]).shape[1]//2
-            # rgb[...,1:] = 0
-            # rgb[...,0] = weights.reshape(rgb.shape[0], -1, weights.shape[-1])[:,:,2] * 1000
-            # print("feats", app_features.grad_fn, valid_rgbs.grad_fn, xyz_sampled.grad_fn, viewdirs.grad_fn)
-            # print("rgb", rgb.grad_fn)
-            # exit()
-            
-
-            
-            # rgb[inside][...,0] = 1.0;
-            # rgb[inside][...,1:] = 0.0;
-            # rgb[inside] = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32, device=torch.device('cuda:0'));
             if not self.data_preparation and save_npz:
                 rgb[:,:,0] = weights[:,:,0];
                 save_npz["rgb"] = rgb.cpu().numpy()
