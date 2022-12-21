@@ -106,6 +106,8 @@ def config_parser(cmd=None):
                         help='specific weights npy file to reload for coarse network')
     parser.add_argument("--ckpt_weights", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--ckpt_mimik", type=str, default=None,
+                        help='specific weights npy file to reload for coarse network')
     parser.add_argument("--sh_feats", type=str, default=None,
                     help='specific weights npy file to reload for coarse network')
 
@@ -119,15 +121,22 @@ def config_parser(cmd=None):
     parser.add_argument("--export_mesh", type=int, default=0)
     parser.add_argument("--caster", type=str, default=None,
                 help='specific weights npy file to reload for coarse network')
+    parser.add_argument("--mimik", type=str, default=None,
+                help='specific weights npy file to reload for coarse network')
 
     parser.add_argument("--use_gt_skeleton", type=int, default=0)
     parser.add_argument("--local_batching", type=int, default=0)
     parser.add_argument("--data_preparation", type=int, default=0)
+    parser.add_argument("--cyclic", type=int, default=0)
 
     parser.add_argument("--free_opt1", type=int, default=0)
     parser.add_argument("--free_opt2", type=int, default=0)
     parser.add_argument("--free_opt3", type=int, default=0)
     parser.add_argument("--free_opt4", type=int, default=0)
+    parser.add_argument("--free_opt5", type=int, default=0)
+    parser.add_argument("--free_opt6", type=int, default=0)
+    parser.add_argument("--free_opt7", type=int, default=0)
+    parser.add_argument("--free_opt8", type=int, default=0)
 
     parser.add_argument("--ngp_render", type=int, default=0)
 

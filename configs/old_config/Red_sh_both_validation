@@ -1,0 +1,70 @@
+dataset_name = blender
+datadir = ./data/nerf_synthetic/anim
+expname =  Red_sh_both_validation
+basedir = "./#refreshlog"
+#basedir = "./#log_trash"
+add_timestamp = 1
+local_batching = 0
+
+caster = sh
+use_gt_skeleton = 0
+#free_opt2 = 1 # direct_map
+JOKE = 0
+
+pose_type = euler
+
+#ckpt = ./log/tensorf_anim_VM_traintest_shark/tensorf_anim_VM_traintest55.th
+ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
+
+#ckpt_ngp = ./torchngp/shark/checkpoints/ngp.pth.tar
+
+#ckpt_skeleton = ./strage_log/default_upsample/default_upsample_skeleton_it59999.th
+
+#ckpt_pcaster = ./log/tensorf_anim_VM_pcasterPole/tensorf_anim_VM_traintest001_pCaster.th
+
+#sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
+
+
+n_iters = 300000
+#batch_size = 4096
+batch_size = 512
+test_batch_size = 1024
+progress_refresh_rate = 1
+
+N_voxel_init = 2097156 # 128**3
+N_voxel_final = 27000000 # 300**3
+upsamp_list = [2000,3000,4000,5500,7000]
+update_AlphaMask_list = [2000,4000]
+
+N_vis = 5
+vis_every = 4000
+step_ratio = 0.5
+#vis__every
+
+render_test = 1
+
+n_lamb_sigma = [16,16,16]
+n_lamb_sh = [48,48,48]
+model_name = TensorVMSplit
+
+
+
+shadingMode = SH
+ngp_render = 0
+
+fea2denseAct = softplus
+
+view_pe = 2
+fea_pe = 2
+
+L1_weight_inital = 8e-5
+L1_weight_rest = 4e-5
+rm_weight_mask_thre = 1e-4
+
+## please uncomment following configuration if hope to training on cp model
+#model_name = TensorCP
+#n_lamb_sigma = [96]
+#n_lamb_sh = [288]
+#N_voxel_final = 125000000 # 500**3
+#L1_weight_inital = 1e-5
+#L1_weight_rest = 1e-5

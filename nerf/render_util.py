@@ -22,17 +22,25 @@ def clip_weight(val, thresh = 1e-4, min=0, max=1):
     return 1-torch.clamp((1-val*(1.0/thresh)), min=min, max=max)
 
 def affine_inverse_batch(bmatrix, device="cuda"):
-    # inv = torch.eye(4, device=device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
-    inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
-    # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).expand(bmatrix.shape[0], -1, -1)
-    inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
-    inv[:,:3, 3] = torch.bmm(torch.transpose(bmatrix[:,:3,:3], 1, 2), -bmatrix[:,:3,3].unsqueeze(-1)).squeeze()
+    # inv = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+    # inv[:,:3,:3] = torch.transpose(bmatrix[:,:3,:3], 1, 2)
+    # inv[:,:3, 3] = torch.bmm(torch.transpose(bmatrix[:,:3,:3], 1, 2), -bmatrix[:,:3,3].unsqueeze(-1)).squeeze()
+    eye = torch.eye(4, device=bmatrix.device).unsqueeze(0).repeat(bmatrix.shape[0], 1, 1)
+
+    rot = bmatrix[:,:3,:3].permute(0,2,1)
+    trans = torch.matmul(rot, -bmatrix[:,:3,3].unsqueeze(-1))
+
+    inv = torch.cat([torch.cat([rot, trans], dim=-1), eye[:,3:,:]], dim=1)
     return inv
 
 def affine_inverse(matrix, device="cuda"):
-    inv = torch.eye(4, device=matrix.device)
-    inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
-    inv[:3, 3] = torch.mv(torch.transpose(matrix[:3,:3], 0, 1), -matrix[:3,3])
+    # inv = torch.eye(4, device=matrix.device)
+    # # inv[:3,:3] = torch.transpose(matrix[:3,:3], 0, 1)
+    # inv[:3,:3] = matrix[:3,:3].permute(1,0)
+    # inv[:3, 3] = torch.mv(matrix[:3,:3].permute(1,0), -matrix[:3,3])
+    rot = matrix[:3,:3].permute(1,0)
+    trans = torch.mv(rot, -matrix[:3,3])
+    inv = torch.cat([torch.cat([rot, trans], dim=-1), torch.tensor([0,0,0,1]).to(matrix.device)], dim=1)
     return inv
 #https://qiita.com/harmegiddo/items/96004f7c8eafbb8a45d0#%E3%82%AA%E3%82%A4%E3%83%A9%E3%83%BC%E8%A7%92
 
@@ -134,18 +142,20 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv = Tru
     # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
     num_j = weights.shape[1]
     # print(valid.shape, weights.shape, weights_sum.shape)
-    if torch.isnan(weights).any() or torch.isinf(weights).any():
-        print("beforezerodiv", torch.isnan(weights).any(),  torch.isinf(weights).any())
-        raise ValueError("nan or inf in weights")
+    # if torch.isnan(weights).any() or torch.isinf(weights).any():
+    #     print("beforezerodiv", torch.isnan(weights).any(),  torch.isinf(weights).any())
+    #     raise ValueError("nan or inf in weights")
     softmax = False
     if softmax:
         m = nn.Softmax(dim=1)
         weights = m(weights)
     else:
-        weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
+        weights_sum = torch.clamp(weights_sum, min=eps)
+        weights = weights/weights_sum.unsqueeze(1)
+        # weights[valid_2] = weights[valid_2]/weights_sum[valid_2].unsqueeze(1)
     # original_weights = torch.where(weights_sum > 1, torch.zeros(weights[:,0].shape, device=weights.device), 1 - weights_sum)
-    if torch.isnan(weights).any() or torch.isinf(weights).any():
-        raise ValueError("faterzerodiv"+"nan or inf in weights")
+    # if torch.isnan(weights).any() or torch.isinf(weights).any():
+    #     raise ValueError("faterzerodiv"+"nan or inf in weights")
         
 
     xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
@@ -330,7 +340,7 @@ def make_joints_from_blender(file_path, device="cuda"):
         if len(data["children"]) == 0:
             translate = torch.tensor(np.array(data_pos[name]["tail"]) - np.array(data_pos[name]["head"])).float()
             translate = torch.mv(obj_bind[:3,:3], translate)
-            bind_pose[:3,3] += translate
+            bind_pose[:3,3] = bind_pose[:3,3] + translate
             joint.add_child(
                 Joint(
                     bind_pose=bind_pose,
@@ -390,7 +400,7 @@ def cast_positions(positions, joints, weights_list = None):
     for i, j in enumerate(joints):
         mat = j.inv_totalTransform(ngp=True).unsqueeze(0).expand(positions.shape[0],-1,-1)
 
-        casted += torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
+        casted = casted  + torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
         # if torch.isnan(casted).any() or torch.isinf(casted).any():
         #     raise ValueError("error!")
     del ones, weights_list, positions, mat
@@ -700,10 +710,6 @@ class Joint():
             animations = quaternion_to_matrix_batch(poses).permute(2,0,1)
         elif type=="euler":
             animations = euler_to_matrix_batch(poses, top_batching=True)
-        # # print(animations.shape, translates.shape, poses.shape)
-        # print(animations[...,:3,:3] - tmp[...,:3,:3])
-        # # print(animations[...,:3,3] - translates)
-        # exit()
 
         animations[:,:3,3] = translates
         self.precomp_forward_global_transforms = animations
@@ -715,6 +721,7 @@ class Joint():
         for c in self.children:
             tmp_precomp.extend(c.get_listed_precomp_global_transforms())
         return tmp_precomp
+    
 
     def rotations_to_transforms(self, poses, parent=None, type="euler"):
         # etm_start = time.perf_counter()
@@ -724,13 +731,7 @@ class Joint():
             pose = self.pose_converter(poses[self.id], type) # as radian
         else:
             pose = self.pose_converter(torch.tensor(poses[self.id], dtype=torch.float32, device=torch.device(poses.device)), type)
-        # print("etm: ", time.perf_counter() - etm_start)
-        # apt_start = time.perf_counter()
         self.apply_transform(pose, only_self=True)
-        # del pose
-        # print("apt : ", time.perf_counter() - apt_start)
-        # comp_start = time.perf_counter()
-        
         if parent is not None:
             t = torch.matmul(parent, self.local_transform())
         else:
@@ -817,6 +818,25 @@ class Joint():
         for c in self.children:
             res.extend(c.get_listed_positions())
         return torch.stack(res, dim=0)
+
+    def get_listed_parents(self, parent_id = None):
+        if parent_id is None:
+            parent_id = self.id
+        self.parent_id = parent_id
+        res = [self.parent_id]
+        for c in self.children:
+            res.extend(c.get_listed_parents(self.id))
+        self.parent_id_list = torch.tensor(res).to(self.device)
+        return res
+    def get_listed_positions_center(self, use_cached=False):
+        if use_cached:
+            pos = torch.matmul(self.precomp_forward_global_transforms, torch.tensor([0.0,0.0,0.0,1.0]).to(self.precomp_forward_global_transforms.device).unsqueeze(0).repeat(self.precomp_forward_global_transforms.shape[0],1).unsqueeze(-1)).squeeze()
+        res = [self.global_pos()]
+        for c in self.children:
+            res.extend(c.get_listed_positions())
+        pos = torch.stack(res, dim=0)
+        parents = torch.gather(pos, 0, self.parent_id_list.unsqueeze(-1).repeat(1,3))
+        return (pos + parents)/2
 
     # def get_listed_positions_first(self):
     #     res = [self.first_pos]

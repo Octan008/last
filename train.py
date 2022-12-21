@@ -1,5 +1,6 @@
 
 import os
+import tensorflow
 from torch import tensor, unsqueeze
 from tqdm.auto import tqdm
 from opt import config_parser
@@ -386,6 +387,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
     os.makedirs(f'{logfolder}/imgs_rgba', exist_ok=True)
     os.makedirs(f'{logfolder}/rgba', exist_ok=True)
     summary_writer = SummaryWriter(logfolder)
+    f = open(f'{logfolder}/args.txt', 'a')
+    f.writelines(str(args))
+    f.close()
 
 
 
@@ -402,6 +406,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         kwargs = ckpt['kwargs']
         kwargs.update({'device':device})
         tensorf = eval(args.model_name)(**kwargs)
+        tensorf.step_ratio = args.step_ratio
+        tensorf.update_stepSize(tensorf.gridSize_tmp)
         tensorf.load(ckpt)
         tensorf.modify_aabb(torch.tensor([2.5, 2.5, 1]).to(device))
         
@@ -465,6 +471,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
     test_dataset.compute_skeleton_poses(skeleton)
     tensorf.set_skeleton(skeleton)
     tensorf.set_skeletonmode()
+
+    if args.free_opt6:
+        print(skeleton.get_listed_names())
+        print(skeleton.get_listed_positions())
+        exit()
 
     # frames = json.load(open(animation_conf, 'r'))["frames"]
 
@@ -531,10 +542,13 @@ def skeleton_optim(rank, args, n_gpu = 1):
     elif args.caster == "mlp":
         if args.free_opt1:
             pCaster_origin = MLPCaster_integrate(len(joints), device, args=args)
+        elif args.free_opt5:
+            pCaster_origin = MLPCaster(len(joints), device, args = args, use_interface=False, use_ffmlp=False)
         else:
             pCaster_origin = MLPCaster(len(joints), device, args = args)
-        # pCaster_origin = MLPCaster_tcnn(len(joints), device)
-        # pCaster_origin = MLPCaster_net(len(joints), device)
+    elif args.caster == "forward":
+        tensorf.forward_caster_mode = True
+        pCaster_origin = DistCaster()
     elif args.caster == "map":
         # if args.free_opt3:
         if False:
@@ -604,6 +618,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     grad_vars_skeletonpose = list(skeleton_dataset.parameters())
     
     
+    
 
     #<Training> Setup Optimizer
     # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
@@ -629,10 +644,12 @@ def skeleton_optim(rank, args, n_gpu = 1):
             {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
             {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
         ]
-
-        params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        if args.free_opt1:
-            params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        # print(list(pCaster_origin.weight_nets.parameters()))
+        # exit()
+        if not args.free_opt5:
+            params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
+        # if args.free_opt1:
+        #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         if not args.use_gt_skeleton:
             params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
@@ -649,7 +666,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
             ]
+
             params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':1e-4})
+            
             params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
             # if args.free_opt1:
             #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
@@ -658,9 +677,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     elif args.caster == "direct_map":
             wd = 1e-6
-            lr = 1e-4
+            lr = 1e-3
             params =  [
-                {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
+                {'name':'mapnets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':lr},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
             ]
             params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':lr})
@@ -672,6 +691,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
             # if not args.use_gt_skeleton:
             #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
+    elif args.caster == "forward":
+        optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
     else:
         try:
             x = 1 / 0
@@ -792,6 +813,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 tvloss = 0
                 linearloss = 0
                 rest_loss = 0
+                eloss=0
                 if args.caster == "bwf":
                     # tvloss = pCaster_origin.TV_loss_blendweights(tvreg, linear=True)* 100
                     # linearloss = pCaster_origin.linear_loss()* 0.01
@@ -802,7 +824,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # )
                     # loss_sigma = weights.sum(dim=0)[sigma < 1e-6].sum(dim=0)
                     # loss_overone = (weights.sum(dim=0) > 1.0).sum(dim=0)
-                    total_loss += tvloss  + linearloss 
+                    total_loss += tvloss  + linearloss
 
                 if args.caster == "sh" and not args.use_gt_skeleton:
                     pass
@@ -813,9 +835,35 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     # rest_loss = torch.mean((bg_alpha - sigma) ** 2) * 1000000
                     # loss *= 0.0001
                     # total_loss += rest_loss
+                if args.free_opt3:
+                    if args.caster == "mlp":
+                        num_sample = 1000
+                        eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
+                        raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        eloss = eloss.sum(-1).mean() * 0.01
+                        total_loss += eloss
+
+                    else:
+                        num_sample = 10000
+                        eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
+                        raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        eloss = eloss.sum(-1).mean() * 0.01
+                        total_loss += eloss
+
+                        
+
+                    # eloss, idx = pCaster_origin.compute_elastic_loss()
+                    # # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                    # raw_sigma = tensorf.raw_sigma.view(-1)
+                    # eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                    # eloss = eloss.sum(-1).mean() * 0.01
+                    # total_loss += eloss
+                    pass
 
                 # loss
-                total_loss += loss
+                total_loss = total_loss + loss
                 if Ortho_reg_weight > 0:
                     loss_reg = tensorf.vector_comp_diffs()
                     total_loss += Ortho_reg_weight*loss_reg
@@ -841,6 +889,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 if mix_precision:
                     scaler.scale(total_loss).backward()
                 else:
+                    # print(total_loss)
                     total_loss.backward()
                 
                 
@@ -863,12 +912,14 @@ def skeleton_optim(rank, args, n_gpu = 1):
                 if iteration % args.progress_refresh_rate == 0:
                     pbar.set_description(
                         f'Iteration {iteration:05d}:'
-                        + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
-                        + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
+                        # + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
+                        # + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
                         + f' mse = {loss:.6f}'
                         + f' tvloss = {tvloss:.6f}'
-                        + f' linearloss = {linearloss:.6f}'
-                        + f' restloss = {rest_loss:.6f}'
+                        # + f' linearloss = {linearloss:.6f}'
+                        # + f' restloss = {rest_loss:.6f}'
+                        + f' elastic_loss = {eloss:.6f}'
+
                     )
                     PSNRs = []
                 
@@ -982,11 +1033,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
 
-
 if __name__ == '__main__':
 
     torch.set_default_dtype(torch.float32)
     torch.manual_seed(20211202)
+    torch.autograd.set_detect_anomaly(True)
     np.random.seed(20211202)
 
     args = config_parser()
@@ -1000,6 +1051,9 @@ if __name__ == '__main__':
         # render_test(args)
         pass
     else:
+        # if args.cyclic:
+        #     cast_invert(rank_criteria, args)
+        #     exit()
         if args.data_preparation:
             reconstruction(args)
             exit()
