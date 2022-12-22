@@ -135,7 +135,7 @@ def compute_weights(xyzs, joints):
 
 
 @torch.cuda.amp.autocast(enabled=True)
-def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool = True):
+def weighted_transformation(xyzs, weights, transforms, viewdir = None, if_transform_is_inv:bool = True):
     #xyzs -> [N, 3]
     #weights -> [N, J]
     #transforms -> [J, 4, 4]
@@ -147,25 +147,14 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool 
     n_sample = xyzs.shape[0]
     # n_joint = transforms.shape[0]
     eps = 1e-7
-    # non_valid = (weights_sum < eps).unsqueeze(-1).expand(n_sample, 3)
 
-    # valid = ~non_valid
-    # valid_2 = weights_sum > eps
-
-    # weights = torch.where(weights_sum > 1,0, weights/weights_sum.unsqueeze(1), weights)
-    # num_j = weights.shape[1]
-    # softmax = False
-    # if softmax:
-    #     m = nn.Softmax(dim=1)
-    #     weights = m(weights)
-    # else:
     weights_sum = torch.clamp(weights_sum, min=eps)
     weights = weights/weights_sum.unsqueeze(1)
     if print_time  : print("time1", time.time() - start)
 
     # if print_time  : start = time.time()
-    # xyzs = torch.cat([xyzs, torch.ones(n_sample).unsqueeze(-1).to(xyzs.device)], dim=--1)#[N,4]
-    # print("time1.5", time.time() - start)
+    xyzs = torch.cat([xyzs, torch.ones(n_sample, device = xyzs.device).unsqueeze(-1)], dim=-1)#[N,4]
+
 
     
     # transforms : [J, 4, 4]
@@ -183,13 +172,15 @@ def weighted_transformation(xyzs, weights, transforms, if_transform_is_inv:bool 
         tmp = affine_inverse_batch(tmp)
         if print_time  : print("time3", time.time() - start)
         if print_time  : start = time.time()
+        if viewdir is not None:
+            tmp_viewdir = torch.matmul(tmp[:,:3,:3], viewdir.unsqueeze(-1))
         tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
         if print_time  : print("time4", time.time() - start)
     result = tmp.squeeze()[...,:3]
 
-    # result = result * weights_sum.unsqueeze(-1) + xyzs[..., :3] * (1-weights_sum.unsqueeze(-1))
+    if viewdir is not None:
+        return result, tmp_viewdir
 
-    # result[non_valid] = xyzs[...,:3][non_valid]
     return result
 
 

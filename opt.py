@@ -137,6 +137,9 @@ def config_parser(cmd=None):
     parser.add_argument("--free_opt6", type=int, default=0)
     parser.add_argument("--free_opt7", type=int, default=0)
     parser.add_argument("--free_opt8", type=int, default=0)
+    parser.add_argument("--free_opt9", type=int, default=0)
+    parser.add_argument("--free_opt10", type=int, default=0)
+    parser.add_argument("--free_opt11", type=int, default=0)
 
     parser.add_argument("--ngp_render", type=int, default=0)
 

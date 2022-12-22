@@ -29,8 +29,8 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 
 n_iters = 300000
 #batch_size = 4096
-batch_size = 256
-test_batch_size = 2048
+batch_size = 300
+test_batch_size = 1024
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3

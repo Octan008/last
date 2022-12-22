@@ -248,14 +248,15 @@ def skeleton_optim(rank, args, n_gpu = 1):
         pCaster_origin.set_SH_feats(sh_field())
         grad_vars_sh_field = sh_field.parameters()
     elif args.caster == "bwf":
-        reso_cur_2 = reso_cur
-        reso_cur_2[0] = reso_cur_2[0]//4
-        reso_cur_2[1] = reso_cur_2[1]//4
-        reso_cur_2[2] = reso_cur_2[2]//4
-        pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
-        if args.ckpt_pcaster is not None:
-            ckpt = torch.load(args.ckpt_pcaster, map_location=device)
-            pCaster_origin.load_state_dict(ckpt["state_dict"])
+        pass
+        # reso_cur_2 = reso_cur
+        # reso_cur_2[0] = reso_cur_2[0]//4
+        # reso_cur_2[1] = reso_cur_2[1]//4
+        # reso_cur_2[2] = reso_cur_2[2]//4
+        # pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
+        # if args.ckpt_pcaster is not None:
+        #     ckpt = torch.load(args.ckpt_pcaster, map_location=device)
+        #     pCaster_origin.load_state_dict(ckpt["state_dict"])
     elif args.caster == "dist":
         pCaster_origin  = DistCaster()
     elif args.caster == "mlp":
@@ -278,6 +279,10 @@ def skeleton_optim(rank, args, n_gpu = 1):
         except:
             traceback.print_exc()
             exit("caster not found")
+    
+    if args.ckpt_pcaster is not None:
+        ckpt = torch.load(args.ckpt_pcaster, map_location=device)
+        pCaster_origin.load_state_dict(ckpt["state_dict"])
 
         
 
@@ -404,7 +409,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
     for iteration in pbar:
         # with torch.autograd.profiler.profile(use_cuda=True) as prof:
-        if True:
+        # if True:
+        with torch.cuda.amp.autocast(): 
             # # JOKE skeleton_optim
             if args.JOKE:
                 print("JOKE RENDER===")

@@ -23,7 +23,7 @@ def crop_rays(ray, w, h, crop_box, rgb=None, filter = 1):
         return ray, rgb
     else:
         return ray
-def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda', skeleton_props=None, is_render_only=False):
+def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda', skeleton_props=None, is_render_only=False, render_weights = False):
 
 
     rgbs, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
@@ -35,8 +35,12 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray
 
         rgbs.append(rgb_map)
         depth_maps.append(depth_map)
+        if render_weights:
+            weights.append(tensorf.render_weights)
+    if render_weights:
+        return torch.cat(rgbs), None, torch.cat(depth_maps), torch.cat(weights), None
     
-    return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
+    return torch.cat(rgbs), None, torch.cat(depth_maps), Bibe, None
     # return torch.cat(rgbs), None, None, None, None
 
 @torch.no_grad()
@@ -114,8 +118,8 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
             # rgb_map_gtpose = (rgb_map_gtpose.numpy() * 255).astype('uint8')
             #tmp
 
-        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
-                                        ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props=skeleton_props, is_render_only=is_render_only)
+        rgb_map, _, depth_map, render_weights, _ = renderer(rays, tensorf, chunk=args.test_batch_size, N_samples=N_samples,
+                                        ndc_ray=ndc_ray, white_bg = white_bg, device=device, skeleton_props=skeleton_props, is_render_only=is_render_only, render_weights = args.free_opt9)
 
         rgb_map = rgb_map.clamp(0.0, 1.0)
         
@@ -159,6 +163,9 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
             imageio.imwrite(f'{savePath}/rgbd/{prtx}{idx:03d}.png', rgb_map)
         if npz_point_cloud:
             raise ValueError("interrupt");
+        if args.free_opt9:
+            for i in range(render_weights.shape[-1]):
+                imageio.imwrite(f'{savePath}/weights/{prtx}{idx:03d}_{i}.png', (render_weights[...,i].cpu().numpy() * 255).astype('uint8'))
 
     # imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)
     # imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)

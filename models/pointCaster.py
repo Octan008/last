@@ -205,14 +205,14 @@ class MLPCaster(CasterBase):
                             num_layers=self.num_layers,
                             device = device
                         ).to(device)
-                    scripted_block = torch.jit.script(pyffmlp)
+                    pyffmlp = torch.jit.script(pyffmlp)
                     self.weight_nets.append(
-                        scripted_block
+                        pyffmlp
                     )
                 self.weight_nets = nn.ModuleList(self.weight_nets)
 
 
-
+    @torch.cuda.amp.autocast(enabled=True)
     def mlp_branch(self, x, i = None, func = None):
         x = x.view(-1, 3)
         # tmp = self.encoder(x, bound=self.bound)
@@ -259,6 +259,7 @@ class MLPCaster(CasterBase):
         res = []
         for i in range(len(self.weight_nets)):
             res.append(self.mlp_branch(x[:,i], i))
+            # res.append(self.mlp_branch(x[i], i))
             # tmp = self.encoder(x[i], bound=self.bound)
             # if self.use_interface:
             #     tmp = self.interface_layer(tmp)
@@ -269,11 +270,12 @@ class MLPCaster(CasterBase):
             # res.append(sigma)
         return torch.stack(res, dim=0)
 
+    @torch.cuda.amp.autocast(enabled=True)
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
-        
-
+        xyz_sampled, viewdirs = self.warp_points(xyz_sampled,  transforms, viewdirs = viewdirs)
+        return  xyz_sampled.view(shape), viewdirs.view(shape)
         tmp = self.warp_points(xyz_sampled,  transforms, viewdirs = viewdirs)
 
         # after care
@@ -283,12 +285,31 @@ class MLPCaster(CasterBase):
 
         return xyz_sampled, viewdirs
 
-    # @torch.cuda.amp.autocast(enabled=True)
+    @torch.cuda.amp.autocast(enabled=True)
     def warp_points(self, points, transforms, viewdirs = None):
         if self.print_time  : start = time.time()
-        points = torch.cat([points, torch.ones(points.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
-        # points = torch.cat([points, torch.ones(1).expand(points.shape[:-1]).unsqueeze(-1)], dim=-1)#[samples, 4]
-        weights = self.compute_weights(points.view(-1, 4), transforms)
+        # points = torch.cat([points, torch.ones(points.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
+        weights = self.compute_weights(points.view(-1, 3), transforms)
+        if self.print_time  : print('compute_weights', time.time() - start)
+        self.weights = weights
+        self.cache_transforms = transforms
+        self.restore_xyz = points
+
+        if self.print_time  : start = time.time()
+        if viewdirs is not None:
+            result, viewdirs = weighted_transformation(points.view(-1, 3), weights.to(torch.float32), transforms, viewdirs.contiguous().view(-1, 3), if_transform_is_inv=self.args.use_indivInv)
+            return result, viewdirs
+        else:
+            subjects = points.reshape(-1, 3)
+
+            result =  weighted_transformation(subjects, weights.to(torch.float32), transforms, if_transform_is_inv=self.args.use_indivInv)
+            return result
+
+    @torch.cuda.amp.autocast(enabled=True)
+    def _warp_points(self, points, transforms, viewdirs = None):
+        if self.print_time  : start = time.time()
+        # points = torch.cat([points, torch.ones(points.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
+        weights = self.compute_weights(points.view(-1, 3), transforms)
         if self.print_time  : print('compute_weights', time.time() - start)
         self.weights = weights
         self.cache_transforms = transforms
@@ -300,14 +321,14 @@ class MLPCaster(CasterBase):
             weights = torch.cat([weights, weights], dim=0)
             if self.print_time  : print('weights', time.time() - start)
             if self.print_time  : start = time.time()
-            viewdirs = torch.cat([viewdirs, torch.zeros(viewdirs.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
+            # viewdirs = torch.cat([viewdirs, torch.zeros(viewdirs.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
             if self.print_time  : print('viewdirs', time.time() - start)
             if self.print_time  : start = time.time()
-            subjects = torch.cat([points.view(-1, 4),(points-viewdirs).view(-1, 4)], dim=0)
+            subjects = torch.cat([points.view(-1, 3),(points-viewdirs).view(-1, 3)], dim=0)
             if self.print_time  : print('subjects', time.time() - start)
             # transforms = torch.cat([transforms, transforms], dim=0)
         else:
-            subjects = points.reshape(-1, 4)
+            subjects = points.reshape(-1, 3)
         if self.print_time  : print('subjects', time.time() - start)
 
         if self.print_time  : start = time.time()
@@ -315,10 +336,10 @@ class MLPCaster(CasterBase):
         if self.print_time  : print('weighted_transformation', time.time() - start)
         return result
     
-    # @torch.cuda.amp.autocast(enabled=True)
+    @torch.cuda.amp.autocast(enabled=True)
     def compute_weights(self, xyz, transforms,  features=None, locs=None):       
         if self.print_time  : start = time.time()
-        # xyz_new = torch.cat([xyz, torch.ones(xyz.shape[0]).unsqueeze(-1).to(xyz.device)], dim=-1)#[samples, 4]
+        xyz = torch.cat([xyz, torch.ones(xyz.shape[0], device=xyz.device).unsqueeze(-1)], dim=-1)#[samples, 4]
         if self.args.use_indivInv:
             invs = transforms
         else:
@@ -326,9 +347,10 @@ class MLPCaster(CasterBase):
         if self.print_time  : print("time for affine_inverse_batch", time.time() - start)
 
         if self.print_time  : start = time.time()
-        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        # result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
         if self.print_time  : print("time for functorch.vmap", time.time() - start)
-
+        self.mapped_pos = result
         # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
         if self.print_time  : start = time.time()
         result = self.normalize_coord(result[:,:,:3])
@@ -344,12 +366,12 @@ class MLPCaster(CasterBase):
 
         return bwf.permute(1,0)
         
-    # @torch.cuda.amp.autocast(enabled=True)
+    @torch.cuda.amp.autocast(enabled=True)
     def compute_warp_jacobian(self, points):
         func = partial(self.warp_points, transforms = self.cache_transforms)
         return functorch.vmap(functorch.jacfwd(func))(points)
 
-    # @torch.cuda.amp.autocast(enabled=True)
+    @torch.cuda.amp.autocast(enabled=True)
     def compute_weights_grad(self, points):
         points = points.unsqueeze(0).expand(self.skeleton_dim, -1, -1)
         # ids = torch.arange(self.skeleton_dim, dtype=torch.int64).to(points.device)

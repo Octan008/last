@@ -744,7 +744,12 @@ class TensorBase(torch.nn.Module):
             torch.cuda.empty_cache()
             if self.print_time  : start = time.time()
             if if_cast:
+                if self.args.free_opt9:
+                    print(xyz_sampled.shape)
+                    id_weight_render = torch.argmin(torch.abs(xyz_sampled[...,2]), dim = -1)
+
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
+
                 if self.args.mimik == "cycle":
                     xyz_sampled, viewdirs = self.mimik_caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
 
@@ -756,6 +761,16 @@ class TensorBase(torch.nn.Module):
                 self.bg_alpha = clip_weight(weights_sum, thresh = self.clip_thresh).view(shape[0], -1).view(shape[0], -1)
                 castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
                 # castweight_mask = weights_sum.view(shape[0], -1) > 0.8
+                if self.args.free_opt9:
+                    print(self.caster_weights.shape, shape)
+                    weights_sum = torch.clamp(weights_sum, min=1e-7)
+                    weights_color =  self.caster_weights/weights_sum.unsqueeze(1)
+                    weights_color = torch.gather(weights_color.view(shape[:-1]+(-1, )), 1, id_weight_render.view(-1,1,1).expand(-1,-1,weights_color.shape[-1]))
+                    self.render_weights = weights_color.squeeze(1)
+                    return self.render_weights[...,:3], self.render_weights[...,3:4]
+                    # exit("fea")
+                
+
 
             if self.print_time  : print("caster time", time.time()-start)
                     
@@ -768,13 +783,12 @@ class TensorBase(torch.nn.Module):
             torch.cuda.empty_cache()
 
         if self.print_time  : start = time.time()
+
+        aabb_mask = self.aabb_mask(xyz_sampled)
+        alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
+        ray_valid = ray_valid & aabb_mask       & alpha_mask     & castweight_mask
         if ray_valid.any():
 
-            aabb_mask = self.aabb_mask(xyz_sampled)
-            alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
-            ray_valid = ray_valid & aabb_mask       & alpha_mask     & castweight_mask
-            # ray_valid = ray_valid & alpha_mask
-            # ray_valid = ray_valid & castweight_mask
                 
             
             xyz_sampled = self.normalize_coord(xyz_sampled)
