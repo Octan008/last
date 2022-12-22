@@ -1,6 +1,6 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname = Yellow_mlp_both_debug_withinterface_num3
+expname = Yellow_mlp_both_debug_withinterface_withGrad
 #basedir = "./#refreshlog"
 basedir = "./#log_trash"
 add_timestamp = 1
@@ -11,6 +11,7 @@ use_gt_skeleton = 0
 #free_opt2 = 1 # direct_map
 JOKE = 0
 #free_opt5 = 1
+free_opt3 = 1
 
 pose_type = euler
 

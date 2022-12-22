@@ -1,12 +1,12 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Red_weightviewer_debug
+expname =  Red_revive_vwf
 #basedir = "./#refreshlog"
 basedir = "./#log_trash"
 add_timestamp = 1
 local_batching = 0
 
-caster = mlp
+caster = bwf
 use_gt_skeleton = 0
 #free_opt2 = 1 # direct_map
 JOKE = 1

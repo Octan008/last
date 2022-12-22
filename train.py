@@ -136,6 +136,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
         tensorf.update_stepSize(tensorf.gridSize_tmp)
         tensorf.load(ckpt)
         tensorf.modify_aabb(torch.tensor([2.5, 2.5, 1]).to(device))
+        # tensorf.modify_aabb(torch.tensor([2.5, 0.25, 1]).to(device))
         
     else:
         tensorf = eval(args.model_name)(aabb, reso_cur, device,
@@ -197,7 +198,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
     test_dataset.compute_skeleton_poses(skeleton)
     tensorf.set_skeleton(skeleton)
     tensorf.set_skeletonmode()
-
     if args.free_opt6:
         print(skeleton.get_listed_names())
         print(skeleton.get_listed_positions())
@@ -248,12 +248,12 @@ def skeleton_optim(rank, args, n_gpu = 1):
         pCaster_origin.set_SH_feats(sh_field())
         grad_vars_sh_field = sh_field.parameters()
     elif args.caster == "bwf":
-        pass
-        # reso_cur_2 = reso_cur
-        # reso_cur_2[0] = reso_cur_2[0]//4
-        # reso_cur_2[1] = reso_cur_2[1]//4
-        # reso_cur_2[2] = reso_cur_2[2]//4
-        # pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
+        # pass
+        reso_cur_2 = reso_cur
+        reso_cur_2[0] = reso_cur_2[0]//4
+        reso_cur_2[1] = reso_cur_2[1]//4
+        reso_cur_2[2] = reso_cur_2[2]//4
+        pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
         # if args.ckpt_pcaster is not None:
         #     ckpt = torch.load(args.ckpt_pcaster, map_location=device)
         #     pCaster_origin.load_state_dict(ckpt["state_dict"])
@@ -335,7 +335,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
             params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
     elif args.caster == "bwf":
-        params = grad_vars_pcaster
+        params = pCaster.get_optparam_groups(lr_init_spatialxyz = lr_grid )
         if not args.use_gt_skeleton:
             params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
@@ -489,12 +489,25 @@ def skeleton_optim(rank, args, n_gpu = 1):
                         pass
                     if args.free_opt3:
                         if args.caster == "mlp":
-                            num_sample = 1000
+                            num_sample = 10000
                             eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
                             raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
                             eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                            eloss = eloss.sum(-1).mean() * 0.01
+                            eloss = eloss.mean() * 0.1
+                            # print(eloss)
                             total_loss += eloss
+
+                            jpos = skeleton.get_listed_positions()
+                            j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
+                            j_weights_sum = torch.sum(j_weights, dim=1)
+                            j_weights_sum = torch.clamp(j_weights_sum, min=1e-6)
+                            j_weights = j_weights / j_weights_sum.unsqueeze(1)
+                            j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
+                            j_w_loss = torch.mean(j_w_loss ** 2)
+                            total_loss += j_w_loss * 1
+                            tvloss = j_w_loss
+
+                            # exit()
 
                         else:
                             num_sample = 10000
@@ -598,14 +611,15 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     with torch.no_grad():
                         if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0) and i_batch == batch_len-1:
                             if rank == rank_criteria:
-                                skeleton_props ={"skeleton_dataset": skeleton_dataset}
-                                PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
-                                summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
                                 skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
                                 sh_field.save(f'{logfolder}/{args.expname}_sh_it{iteration}.th')
                                 if not args.caster == "sh":
                                     pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
                                 tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
+                                skeleton_props ={"skeleton_dataset": skeleton_dataset}
+                                PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
+                                summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
+                                
 
                     #     # grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
                     #     # optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))

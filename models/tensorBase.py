@@ -745,8 +745,8 @@ class TensorBase(torch.nn.Module):
             if self.print_time  : start = time.time()
             if if_cast:
                 if self.args.free_opt9:
-                    print(xyz_sampled.shape)
-                    id_weight_render = torch.argmin(torch.abs(xyz_sampled[...,2]), dim = -1)
+                    # print(xyz_sampled.shape)
+                    id_weight_render = torch.argmin(torch.abs(xyz_sampled[...,2]-1), dim = -1)
 
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
 
@@ -756,18 +756,26 @@ class TensorBase(torch.nn.Module):
 
 
                 # if not self.args.free_opt2:
-                self.caster_weights = self.caster_origin.get_weights()
+                self.caster_weights = self.caster_origin.get_weights()#N,J
                 weights_sum = torch.sum(self.caster_weights, dim=1)
-                self.bg_alpha = clip_weight(weights_sum, thresh = self.clip_thresh).view(shape[0], -1).view(shape[0], -1)
+                # self.bg_alpha = clip_weight(weights_sum, thresh = self.clip_thresh).view(shape[0], -1)
+                self.bg_alpha = clip_weight(weights_sum, thresh = 0.2).view(shape[0], -1)
                 castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
                 # castweight_mask = weights_sum.view(shape[0], -1) > 0.8
                 if self.args.free_opt9:
-                    print(self.caster_weights.shape, shape)
+                    # print(self.caster_weights.shape, shape)
                     weights_sum = torch.clamp(weights_sum, min=1e-7)
                     weights_color =  self.caster_weights/weights_sum.unsqueeze(1)
-                    weights_color = torch.gather(weights_color.view(shape[:-1]+(-1, )), 1, id_weight_render.view(-1,1,1).expand(-1,-1,weights_color.shape[-1]))
+                    weights_color = weights_color.view(shape[0], shape[1], weights_color.shape[-1])
+                    # print(weights_color.shape, id_weight_render.shape, self.bg_alpha.shape)
+                    print(torch.sum(self.bg_alpha < 0.8))
+                    weights_color = weights_color * self.bg_alpha.unsqueeze(-1)
+                    #weights_color.view(shape[:-1]+(-1, ) : B, depth, J
+                    # print(weights_color.view((shape[1], shape[0], weights_color.shape[-1], )))
+                    weights_color = torch.gather(weights_color, 1, id_weight_render.view(-1,1,1).expand(-1,-1,weights_color.shape[-1]))
                     self.render_weights = weights_color.squeeze(1)
-                    return self.render_weights[...,:3], self.render_weights[...,3:4]
+                    # xyz_sampled += torch.tensor([0,0,1], device = xyz_sampled.device).view(1,1,3)
+                    # return self.render_weights[...,:3], self.render_weights[...,3:4]
                     # exit("fea")
                 
 

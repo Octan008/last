@@ -13,11 +13,11 @@ def crop_rays(ray, w, h, crop_box, rgb=None, filter = 1):
     print(ray.shape)
     print()
     ray = ray.reshape(w, h, 6)
-    print(ray.shape)
+    # print(ray.shape)
     ray = ray[crop_box[0][0]:crop_box[0][1]:filter, crop_box[1][0]:crop_box[1][1]:filter, :]
-    print(ray.shape)
+    # print(ray.shape)
     ray = ray.reshape(-1, 6)
-    print(ray.shape)
+    # print(ray.shape)
     if rgb is not None:
         
         return ray, rgb
@@ -40,7 +40,7 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray
     if render_weights:
         return torch.cat(rgbs), None, torch.cat(depth_maps), torch.cat(weights), None
     
-    return torch.cat(rgbs), None, torch.cat(depth_maps), Bibe, None
+    return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
     # return torch.cat(rgbs), None, None, None, None
 
 @torch.no_grad()
@@ -73,9 +73,13 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
         W, H = test_dataset.img_wh
         rays = samples.view(-1,samples.shape[-1])
         # exit("crop_ray")
-        if npz_point_cloud:
-            rays = crop_rays(rays, W, H, [[200, 600], [200, 600]], filter = 10)
-            W, H = (600-200)//10, (600-200)//10
+        if args.free_opt9:
+            st = 0
+            ed = 800
+            rays = crop_rays(rays, W, H, [[st,ed], [st,ed]], filter = 10)
+            gt_w, gt_h = W, H
+            W, H = (ed-st)//10, (ed-st)//10
+            
         # exit("crop_ray")
 
         if not args.data_preparation:
@@ -144,11 +148,14 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
         rgb_map = (rgb_map.numpy() * 255).astype('uint8')
         
         #GT と inf を一緒に保存
-        gt_rgb = (test_dataset.all_rgbs[idxs[idx]].view(H, W, 3).numpy() * 255).astype('uint8')
-        # gt_rgb = (test_dataset.all_rgbs[n_vis_offset].view(H, W, 3).numpy() * 255).astype('uint8')
-        # rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
+        if not args.free_opt9:
+            gt_rgb = (test_dataset.all_rgbs[idxs[idx]].view(H, W, 3).numpy() * 255).astype('uint8')
+            # gt_rgb = (test_dataset.all_rgbs[n_vis_offset].view(H, W, 3).numpy() * 255).astype('uint8')
+            # rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
+            
+        else:
+            gt_rgb = (test_dataset.all_rgbs[idxs[idx]].view(gt_h, gt_w, 3)[::10,::10,:].numpy() * 255).astype('uint8')
         rgb_map = np.concatenate((rgb_map, gt_rgb), axis=1)
-
         #tmp
         # if not args.data_preparation:
         #     rgb_map = np.concatenate((rgb_map, rgb_map_gtpose), axis=1)
@@ -165,7 +172,7 @@ def evaluation(test_dataset,tensorf, args, renderer, savePath=None, N_vis=5, prt
             raise ValueError("interrupt");
         if args.free_opt9:
             for i in range(render_weights.shape[-1]):
-                imageio.imwrite(f'{savePath}/weights/{prtx}{idx:03d}_{i}.png', (render_weights[...,i].cpu().numpy() * 255).astype('uint8'))
+                imageio.imwrite(f'{savePath}/weights_{prtx}{idx:03d}_{i}.png', (render_weights[...,i].reshape(H, W, 1).cpu().numpy() * 255).astype('uint8'))
 
     # imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)
     # imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)
