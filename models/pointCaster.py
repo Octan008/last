@@ -352,6 +352,7 @@ class MLPCaster(CasterBase):
         if self.print_time  : start = time.time()
         # result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
         result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        self.cache_transformed_pos = result.permute(1,0,2)
         if self.print_time  : print("time for functorch.vmap", time.time() - start)
         self.mapped_pos = result
         # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
@@ -413,7 +414,7 @@ class MLPCaster(CasterBase):
             print("nan in residual")
             raise ValueError("gradval")
         grad = grad ** 2
-        log_grad = torch.exp(-grad)
+        log_grad = torch.log(1+grad)
         residual = torch.sum(log_grad, dim=-1)
 
         return self.scale_loss(residual, scale = 0.5), idx
@@ -734,8 +735,8 @@ class BWCaster(CasterBase):
 
     def normalize_coord(self, xyz_sampled):
         return (xyz_sampled-self.ray_aabb[0]) * self.invrayaabbSize - 1
-    def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001):
-        grad_vars = [{'params': self.app_line, 'lr': lr_init_spatialxyz}, {'params': self.app_plane, 'lr': lr_init_spatialxyz}]
+    def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001, wd = 1e-6):
+        grad_vars = [{'params': self.app_line, 'lr': lr_init_spatialxyz, 'weight_decay': wd}, {'params': self.app_plane, 'lr': lr_init_spatialxyz, 'weight_decay': wd}]
         return grad_vars
 
     def init_svd_volume(self, res, device):
@@ -750,11 +751,13 @@ class BWCaster(CasterBase):
             plane_coef.append(torch.nn.Parameter(
                 # scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
                 # scale * torch.zeros((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
-                scale * torch.ones((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+                scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+                # scale * torch.ones((self.j_channel, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
             line_coef.append(
                 # torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
                 # torch.nn.Parameter(scale * torch.zeros((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
-                torch.nn.Parameter(scale * torch.ones((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
+                torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
+                # torch.nn.Parameter(scale * torch.ones((self.j_channel, n_component[i], gridSize[vec_id], 1))))
 
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
         
@@ -762,8 +765,7 @@ class BWCaster(CasterBase):
         shape = xyz_sampled.shape
         xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         # # 1115
-        weights = self.compute_weights(xyz_sampled.view(-1, 3),transforms)
-        self.weights = weights
+        weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
         self.weights = weights
         self.cache_transforms = transforms
         self.restore_xyz = xyz_sampled
@@ -777,10 +779,18 @@ class BWCaster(CasterBase):
         total = 0
         for idx in range(len(self.app_line)):
             for i in range(self.app_line[idx].shape[0]):
-                total = total + reg(self.app_line[idx][i].unsqueeze(0)) * 1e-4 + reg(self.app_plane[idx][i].unsqueeze(0)) * 1e-3
-                # if linear:
-                #     total = total + (tv_loss_func_line(self.app_line[idx][i]) * 1e-4 + tv_loss_func_plane(self.app_plane[idx][i]) * 1e-3) * 1e-4
+                total = total + reg(self.app_line[idx][i].unsqueeze(0)) * 1e-4 + reg(self.app_plane[idx][i].unsqueeze(0)) * 1e-3                
         return total
+
+    def TV_loss_bwf(self, reg, linear = False):
+        total = 0
+        
+        for idx in range(len(self.app_line)):
+            # print("tvloss", total)
+            total = total + reg(self.app_line[idx][0].unsqueeze(0)) * 1e-3     
+        return total
+
+
     def linear_loss(self):
         total = 0
         for idx in range(len(self.app_line)):
@@ -825,38 +835,240 @@ class BWCaster(CasterBase):
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
         # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
         result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        self.cache_transformed_pos = result
+        dists = torch.sum(result[:,:,:3] * result[:,:,:3], dim=-1)
+        alphas = torch.exp(-dists)
+        result = self.normalize_coord(result[:,:,:3])
+        bwf = self.sample_BWfield(result) # [j,sample]
+
+        bwf = bwf * alphas
+        # return torch.transpose(bwf, 0 , 1)
+        return bwf.permute(1,0)
+
+
+class Map_BWCaster(CasterBase):
+    def __init__(self, dim, gridSize, device):
+        super().__init__()
+        self.app_n_comp = [16,16,16]
+        self.j_channel = dim
+        self.gridSize = gridSize
+        self.app_dim = dim
+        self.matMode = [[0,1], [0,2], [1,2]]
+        self.vecMode =  [2, 1, 0]
+        self.aabb = None
+        self.invaabbSize = None
+        self.ray_aabb = None
+        self.joints = None
+        self.se3_dim = 6
+        self.init_svd_volume(gridSize, device)
+    def compute_jacobian(self, points):
+        func = partial(self.warp_points)
+        return functorch.vmap(functorch.jacfwd(func))(points)
+        # return torch.autograd.functional.jacobian(func, points, create_graph=True, vectorize=True)
+
+    @torch.cuda.amp.autocast(enabled=True)
+    def compute_elastic_loss(self, num_sample = -1):
+        points = self.restore_xyz[:,:].reshape(-1, 3)
+        points_shape  = points.shape
+        idx = None
+        if num_sample > 0:
+            idx = torch.randint(0, points_shape[0], size=[num_sample], device=points.device)
+            points = torch.index_select(points, 0, idx)
+
+        jacobian = self.compute_jacobian(points.contiguous())
+        __, svals, __ = torch.svd(jacobian.to(torch.float32), compute_uv=False)
+        log_svals = torch.log(svals.to(torch.float16)+1e-6)
+        residual = torch.sum(log_svals**2, dim=-1)
+
+        return self.scale_loss(residual, scale = 0.5), idx
+
+    def warp_points(self, xyz_sampled, viewdirs = None):
+        
+        # # 1115
+        xyz_normalized = self.normalize_coord(xyz_sampled)
+        bwf = self.sample_BWfield(xyz_normalized.view(-1, 3)).permute(1,0) # [j,sample]
+        w = bwf[...,:3]
+        v = bwf[...,3:]
+        eps = 1e-6
+        theta  = torch.sum(w*w, axis=-1)
+        theta = torch.clamp(theta, min = eps).sqrt()
+
+        v = v/theta.unsqueeze(-1)
+        w = w/theta.unsqueeze(-1)
+        screw_axis = torch.cat([w, v], axis=-1)
+        
+        transform = exp_se3(screw_axis.permute(1,0), theta).permute(2,0,1)
+        # print(screw_axis.shape, theta.shape, xyz_sampled.shape, transform.shape)
+        xyz_sampled = torch.cat([xyz_sampled.view(-1,3), torch.ones(xyz_sampled.view(-1,3).shape[0], device = xyz_sampled.device).unsqueeze(-1)], dim=--1)#[N,4]
+        xyz_sampled = torch.matmul(transform, xyz_sampled.view(-1, 4).unsqueeze(-1)).squeeze()[...,:3]
+        
+        xyz_sampled = xyz_sampled[...,:3]
+
+        self.weights = transform
+        self.cache_transforms = transform
+        self.restore_xyz = xyz_sampled
+        if viewdirs is not None:
+            viewdirs = torch.matmul(transform[...,:3,:3], viewdirs.reshape(-1, 3).unsqueeze(-1)).squeeze()[...,:3]
+            return xyz_sampled, viewdirs
+        return xyz_sampled
+        
+
+
+    def normalize_coord(self, xyz_sampled):
+        return (xyz_sampled-self.ray_aabb[0]) * self.invrayaabbSize - 1
+    def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001, wd = 1e-6):
+        grad_vars = [{'params': self.app_line, 'lr': lr_init_spatialxyz, 'weight_decay': wd}, {'params': self.app_plane, 'lr': lr_init_spatialxyz, 'weight_decay': wd}]
+        return grad_vars
+
+    def init_svd_volume(self, res, device):
+        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
+        self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
+
+    def init_one_svd(self, n_component, gridSize, scale, device):
+        plane_coef, line_coef = [], []
+        for i in range(len(self.vecMode)):
+            vec_id = self.vecMode[i]
+            mat_id_0, mat_id_1 = self.matMode[i]
+            plane_coef.append(torch.nn.Parameter(
+                # scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+                # scale * torch.zeros((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+                scale * torch.randn((self.se3_dim, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+                # scale * torch.ones((self.j_channel, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+            line_coef.append(
+                # torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
+                # torch.nn.Parameter(scale * torch.zeros((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
+                torch.nn.Parameter(scale * torch.randn((self.se3_dim, 1, n_component[i], gridSize[vec_id], 1))))
+                # torch.nn.Parameter(scale * torch.ones((self.j_channel, n_component[i], gridSize[vec_id], 1))))
+
+        return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
+        
+    def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
+        shape = xyz_sampled.shape
+        xyz_slice = xyz_sampled.view(-1, 3).shape[0]
+        xyz_sampled, viewdirs = self.warp_points(xyz_sampled, viewdirs)
+        
+        # # # 1115
+        # xyz_normalized = self.normalize_coord(xyz_sampled)
+        # bwf = self.sample_BWfield(xyz_normalized.view(-1, 3)).permute(1,0) # [j,sample]
+        # w = bwf[...,:3]
+        # v = bwf[...,3:]
+        # eps = 1e-6
+        # theta  = torch.sum(w*w, axis=-1)
+        # theta = torch.clamp(theta, min = eps).sqrt()
+
+        # v = v/theta.unsqueeze(-1)
+        # w = w/theta.unsqueeze(-1)
+        # screw_axis = torch.cat([w, v], axis=-1)
+        
+        # transform = exp_se3(screw_axis.permute(1,0), theta).permute(2,0,1)
+        # # print(screw_axis.shape, theta.shape, xyz_sampled.shape, transform.shape)
+        # xyz_sampled = torch.cat([xyz_sampled.view(-1,3), torch.ones(xyz_sampled.view(-1,3).shape[0], device = xyz_sampled.device).unsqueeze(-1)], dim=--1)#[N,4]
+        # xyz_sampled = torch.matmul(transform, xyz_sampled.view(-1, 4).unsqueeze(-1)).squeeze()[...,:3]
+        # viewdirs = torch.matmul(transform[...,:3,:3], viewdirs.reshape(-1, 3).unsqueeze(-1)).squeeze()[...,:3]
+        # xyz_sampled = xyz_sampled[...,:3]
+
+        # self.weights = transform
+        # self.cache_transforms = transforms
+        # self.restore_xyz = xyz_sampled
+
+        # xyz_sampled, viewdirs = weighted_transformation(xyz_sampled.view(-1, 3), weights.to(torch.float32), transforms, viewdirs.contiguous().view(-1, 3), if_transform_is_inv=self.args.use_indivInv)
+        # print(shape, xyz_sampled.shape, viewdirs.shape)
+        xyz_sampled = xyz_sampled.view(shape)
+        viewdirs = viewdirs.view(shape)
+        return xyz_sampled, viewdirs
+
+    def TV_loss_blendweights(self, reg, linear = False):
+        total = 0
+        for idx in range(len(self.app_line)):
+            for i in range(self.app_line[idx].shape[0]):
+                total = total + reg(self.app_line[idx][i].unsqueeze(0)) * 1e-4 + reg(self.app_plane[idx][i].unsqueeze(0)) * 1e-3                
+        return total
+
+    def TV_loss_bwf(self, reg, linear = False):
+        total = 0
+        
+        for idx in range(len(self.app_line)):
+            # print("tvloss", total)
+            total = total + reg(self.app_line[idx][0].unsqueeze(0)) * 1e-3     
+        return total
+
+
+    def linear_loss(self):
+        total = 0
+        for idx in range(len(self.app_line)):
+            for i in range(self.app_line[idx].shape[0]):
+                total = total + (tv_loss_func_line(self.app_line[idx][i]) * 1e-4 + tv_loss_func_plane(self.app_plane[idx][i]) * 1e-3) * 1e-4
+        return total
+
+
+    def sample_BWfield(self, xyz_sampled):
+        # plane + line basis
+        # plane : 3, self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]
+        feats = []
+        for i in range(self.se3_dim):
+            coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).view(3, -1, 1, 2)
+            coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
+            coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).view(3, -1, 1, 2)
+            sigma_feature = torch.zeros(xyz_sampled.shape[0], device=xyz_sampled.device)
+            for idx_plane in range(len(self.app_plane)):
+                # self.app_plane[idx_plane][i,0].unsqueeze(0) : 1, C, W, H
+                # coordinate_plane[[idx_plane]] : 1, H, W, 2
+                plane_coef_point = F.grid_sample(self.app_plane[idx_plane][i,0].unsqueeze(0), coordinate_plane[[idx_plane]],
+                                                    align_corners=True).view(-1, *xyz_sampled.shape[:1])
+                line_coef_point = F.grid_sample(self.app_line[idx_plane][i, 0].unsqueeze(0), coordinate_line[[idx_plane]],
+                                                align_corners=True).view(-1, *xyz_sampled.shape[:1])
+                sigma_feature = sigma_feature + torch.sum(plane_coef_point * line_coef_point, dim=0)
+
+            feats.append(sigma_feature)
+        return F.relu(torch.stack(feats))
+        
+    
+    def compute_weights(self, xyz, transforms,  features=None, locs=None):
+        # return compute_weisghts(xyz, self.joints).to(torch.float32)
+
+       
+        xyz = torch.cat([xyz, torch.ones(xyz.shape[0], device = xyz.device).unsqueeze(-1)], dim=-1)#[samples, 4]
+        #xyz_new : [samples, 4]
+        #invs: [j, 4, 4]
+
+        if self.args.use_indivInv:
+            invs = transforms
+        else:
+            invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
+        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
+        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        self.cache_transformed_pos = result
         result = self.normalize_coord(result[:,:,:3])
         bwf = self.sample_BWfield(result) # [j,sample]
         # return torch.transpose(bwf, 0 , 1)
         return bwf.permute(1,0)
 
-    def _sample_BWfield(self, xyz_sampled):
-        # plane + line basis
-        # plane : 3, self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]
-        feats = []
-        print(xyz_sampled.shape, len(self.app_plane), self.app_plane[0].shape)
+    # def sample_BWfield(self, xyz_sampled):
+    #     # plane + line basis
+    #     # plane : 3, self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]
+    #     feats = []
+    #     print(xyz_sampled.shape, len(self.app_plane), self.app_plane[0].shape)
         
-        # for i in range(xyz_sampled.shape[0]):
-        coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
-        coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
-        coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
-        sigma_feature = torch.zeros(xyz_sampled.shape[:2], device=xyz_sampled.device)
-        print(coordinate_plane.shape, coordinate_line.shape)
-        # exit()
-        for idx_plane in range(len(self.app_plane)):
-            # self.app_plane[idx_plane][i,0].unsqueeze(0) : 1, C, W, H
-            # coordinate_plane[[idx_plane]] : 1, H, W, 2
-            print(self.app_plane[idx_plane][:,0].shape, coordinate_plane[idx_plane].unsqueeze(0).expand(self.j_channel,-1,-1,-1).shape)
+    #     # for i in range(xyz_sampled.shape[0]):
+    #     coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).view(3, self.j_channel, -1, 1, 2)
+    #     coordinate_line  = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
+    #     coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).view(3, self.j_channel, -1, 1, 2)
+    #     sigma_feature = torch.zeros(xyz_sampled.shape[:2], device=xyz_sampled.device)
+    #     print(coordinate_plane.shape, coordinate_line.shape)
+    #     # exit()
+    #     for idx_plane in range(len(self.app_plane)):
+    #         # self.app_plane[idx_plane][i,0].unsqueeze(0) : 1, C, W, H
+    #         # coordinate_plane[[idx_plane]] : 1, H, W, 2
+    #         # print(self.app_plane[idx_plane][:,0].shape, coordinate_plane[idx_plane].unsqueeze(0).expand(self.j_channel,-1,-1,-1).shape)
             
-            plane_coef_point = F.grid_sample(self.app_plane[idx_plane][:,0], coordinate_plane[idx_plane].unsqueeze(0).expand(self.j_channel,-1,-1,-1),
-                                                align_corners=True).view(-1, *xyz_sampled.shape[1:2])
-            line_coef_point = F.grid_sample(self.app_line[idx_plane][:, 0], coordinate_line[idx_plane].unsqueeze(0).expand(self.j_channel,-1,-1,-1),
-                                            align_corners=True).view(-1, *xyz_sampled.shape[1:2])
-            sigma_feature += torch.sum(plane_coef_point * line_coef_point, dim=0)
+    #         plane_coef_point = F.grid_sample(self.app_plane[idx_plane], coordinate_plane[idx_plane],
+    #                                             align_corners=True).view(self.j_channel, 16, -1)
+    #         line_coef_point = F.grid_sample(self.app_line[idx_plane], coordinate_line[idx_plane],
+    #                                         align_corners=True).view(self.j_channel, 16, -1)
+    #         sigma_feature += torch.sum(plane_coef_point * line_coef_point, dim=1)
 
-        # feats.append(sigma_feature)
-        exit("here")
-        return F.relu(torch.stack(feats))
+    #     # feats.append(sigma_feature)
+    #     return F.relu(sigma_feature)
 
 class shCaster(CasterBase):
 

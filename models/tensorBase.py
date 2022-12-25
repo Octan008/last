@@ -415,14 +415,11 @@ class TensorBase(torch.nn.Module):
     #         ckpt.update({'alphaMask.mask':np.packbits(alpha_volume.reshape(-1))})
     #         ckpt.update({'alphaMask.aabb': self.alphaMask.aabb.cpu()})
     #     torch.save(ckpt, path)
-
+    
     def load(self, ckpt):
         if self.use_ngprender:
             tmp_load = torch.load(ckpt, map_location=self.device)
-            # print(tmp_load)
-            print(tmp_load["model"].keys())
             self.ngprenderer.load_state_dict(torch.load(ckpt, map_location=self.device)["model"], strict=False)
-            # exit("load ngprenderer")
             print("load ngprenderer from", ckpt)
             
             return
@@ -669,19 +666,6 @@ class TensorBase(torch.nn.Module):
 
         shape = xyz_sampled.shape
 
-        # if self.forward_caster_mode:
-        #     grid_res = 50
-        #     box = self.get_grid_points([grid_res, grid_res, grid_res]).to(self.device)
-        #     # box = self.get_grid_points([2,2,2]).to(self.device)
-        #     box_shape = box.shape
-        #     # box = box.view(-1,3)
-        #     tmp_xyz_sampled = xyz_sampled
-        #     xyz_sampled = box
-        #     shape = xyz_sampled.shape
-        #     tmp_shape = tmp_xyz_sampled.shape
-        #     tmp_viewdirs = viewdirs
-
-
 
 
 
@@ -745,7 +729,6 @@ class TensorBase(torch.nn.Module):
             if self.print_time  : start = time.time()
             if if_cast:
                 if self.args.free_opt9:
-                    # print(xyz_sampled.shape)
                     id_weight_render = torch.argmin(torch.abs(xyz_sampled[...,2]-1), dim = -1)
 
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
@@ -765,6 +748,7 @@ class TensorBase(torch.nn.Module):
                 if self.args.free_opt9:
                     # print(self.caster_weights.shape, shape)
                     weights_sum = torch.clamp(weights_sum, min=1e-7)
+                    self.weights_sum = weights_sum
                     weights_color =  self.caster_weights/weights_sum.unsqueeze(1)
                     weights_color = weights_color.view(shape[0], shape[1], weights_color.shape[-1])
                     # print(weights_color.shape, id_weight_render.shape, self.bg_alpha.shape)
@@ -792,16 +776,17 @@ class TensorBase(torch.nn.Module):
 
         if self.print_time  : start = time.time()
 
-        aabb_mask = self.aabb_mask(xyz_sampled)
-        alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
-        ray_valid = ray_valid & aabb_mask       & alpha_mask     & castweight_mask
-        if ray_valid.any():
 
-                
+        if not self.data_preparation:
+            aabb_mask = self.aabb_mask(xyz_sampled)
+            alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
+            ray_valid = ray_valid & aabb_mask       & alpha_mask  #   & castweight_mask
+
+        if ray_valid.any(): 
             
             xyz_sampled = self.normalize_coord(xyz_sampled)
 
-            xyz_sampled = xyz_sampled.reshape(shape[0],shape[1], 3)
+            # xyz_sampled = xyz_sampled.reshape(shape[0],shape[1], 3)
 
             sigma_feature = self.compute_densityfeature(xyz_sampled[ray_valid])
             torch.cuda.empty_cache()
@@ -812,16 +797,18 @@ class TensorBase(torch.nn.Module):
             if not self.data_preparation and save_npz:
                 save_npz["sigma"] = sigma.cpu().numpy()
             # print("sigma", sigma.grad_fn)
-            self.sigma = sigma
-            # exit("amkingmasking")
             
+            # exit("amkingmasking")
+        self.sigma = sigma
+        
         if self.print_time  : print("sigma_time", time.time() - start)
 
 
 
         alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
+        self.occupancy = 1 - alpha
         self.raw_sigma = weight
-        if not self.args.free_opt2:
+        if not self.args.free_opt2 and not self.data_preparation:
             weight = weight * self.bg_alpha
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
@@ -831,21 +818,18 @@ class TensorBase(torch.nn.Module):
         if self.print_time  : start = time.time()
         if app_mask.any():
             
-            app_features = self.compute_appfeature(xyz_sampled[app_mask])    
-            valid_rgbs = self.renderModule(xyz_sampled[app_mask], viewdirs[app_mask], app_features)
+            app_features = self.compute_appfeature(xyz_sampled[app_mask].view(-1,3))    
+            valid_rgbs = self.renderModule(xyz_sampled[app_mask].view(-1,3), viewdirs[app_mask].view(-1,3), app_features)
             rgb[app_mask] = valid_rgbs
-            if not self.data_preparation and save_npz:
-                rgb[:,:,0] = weights[:,:,0];
-                save_npz["rgb"] = rgb.cpu().numpy()
         
 
 
-        if not self.data_preparation and save_npz:
-            itr = 0;    
-            files = glob.glob("./data_point_cloud_*.npz")
-            if len(files) > 0:
-                itr = int(files[-1].split(".")[1].split("_")[-1]) + 1
-            np.savez("./data_point_cloud_"+str(itr)+".npz", **save_npz)
+        # if not self.data_preparation and save_npz:
+        #     itr = 0;    
+        #     files = glob.glob("./data_point_cloud_*.npz")
+        #     if len(files) > 0:
+        #         itr = int(files[-1].split(".")[1].split("_")[-1]) + 1
+        #     np.savez("./data_point_cloud_"+str(itr)+".npz", **save_npz)
         
 
         acc_map = torch.sum(weight, -1)

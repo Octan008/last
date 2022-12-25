@@ -250,9 +250,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
     elif args.caster == "bwf":
         # pass
         reso_cur_2 = reso_cur
-        reso_cur_2[0] = reso_cur_2[0]//4
-        reso_cur_2[1] = reso_cur_2[1]//4
-        reso_cur_2[2] = reso_cur_2[2]//4
+        reso_cur_2[0] = reso_cur_2[0]
+        reso_cur_2[1] = reso_cur_2[1]
+        reso_cur_2[2] = reso_cur_2[2]
         pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device)
         # if args.ckpt_pcaster is not None:
         #     ckpt = torch.load(args.ckpt_pcaster, map_location=device)
@@ -273,6 +273,12 @@ def skeleton_optim(rank, args, n_gpu = 1):
         pCaster_origin = MapCaster(num_animFrames, device, args=args)
     elif  args.caster == "direct_map":
         pCaster_origin = DirectMapCaster(num_animFrames, device, args=args)
+    elif args.caster == "grid_map":
+        reso_cur_2 = reso_cur
+        reso_cur_2[0] = reso_cur_2[0]
+        reso_cur_2[1] = reso_cur_2[1]
+        reso_cur_2[2] = reso_cur_2[2]
+        pCaster_origin = Map_BWCaster(len(joints), reso_cur_2 ,device)
     else:
         try:
             x = 1 / 0
@@ -297,6 +303,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     lr_sh = args.lr_sh
     if args.pose_type == "euler":
         lr_skel = args.lr_skel
+        lr_skel = 0.2
     else:
         lr_skel = 1e-4
 
@@ -324,7 +331,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     
     
     
-
+    wd = 1e-6
     #<Training> Setup Optimizer
     # optimizer = torch.optim.Adam([{'params': grad_vars_pcaster, 'lr': 1e-1}], betas=(0.9,0.99))
     if mix_precision:
@@ -339,12 +346,17 @@ def skeleton_optim(rank, args, n_gpu = 1):
         if not args.use_gt_skeleton:
             params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
         optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
+    elif args.caster == "grid_map":
+        params = pCaster.get_optparam_groups(lr_init_spatialxyz = 1e-4 )
+        if not args.use_gt_skeleton:
+            params.append({'params': grad_vars_skeletonpose, 'lr': lr_skel})
+        optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
 
     elif args.caster == "dist":
         optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': lr_skel}], betas=(0.9,0.99))
 
     elif args.caster == "mlp":
-        wd = 1e-6
+        
         params =  [
             {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
             {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
@@ -410,16 +422,39 @@ def skeleton_optim(rank, args, n_gpu = 1):
     for iteration in pbar:
         # with torch.autograd.profiler.profile(use_cuda=True) as prof:
         # if True:
+        if args.caster == "grid_map" or args.caster == "bwf":
+            with torch.no_grad():
+                if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
+                    if rank == rank_criteria:
+                        skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton_it{iteration}.th')
+                        sh_field.save(f'{logfolder}/{args.expname}_sh_it{iteration}.th')
+                        if not args.caster == "sh":
+                            pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
+                        tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
+                        skeleton_props ={"skeleton_dataset": skeleton_dataset}
+                        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
+                        summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
+            
+            itr = itr % num_frames
+        
+            
+            if (allanimframes[itr+num_frames*rank_diff] != 1):
+
+                itr += 1
+                continue
+            # print(itr)
+            # print(allanimframes[itr+num_frames*rank_diff])
+            
         with torch.cuda.amp.autocast(): 
             # # JOKE skeleton_optim
             if args.JOKE:
                 print("JOKE RENDER===")
-                if iteration == 0 or (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
-                    skeleton_props ={"skeleton_dataset": skeleton_dataset}
-                    PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
-                    prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props, device=device)
-                    summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-                    print("JOKE")
+                # if iteration == 0 or (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
+                skeleton_props ={"skeleton_dataset": skeleton_dataset}
+                PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
+                prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props, device=device)
+                summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
+                print("JOKE")
                 exit("JOKEEXIT")
             # # JOKE skeleton_optim
             
@@ -482,20 +517,82 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     linearloss = 0
                     rest_loss = 0
                     eloss=0
+                    if args.caster == "grid_map":
+                        tvloss = pCaster_origin.TV_loss_bwf(tvreg) 
+                        total_loss += tvloss  * 0.1
+                        num_sample = 10000
+                        eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
+                        raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        eloss = eloss.sum(-1).mean() * 0.01
+                        total_loss += eloss
+
+
                     if args.caster == "bwf":
-                        total_loss += tvloss  + linearloss
+                        tvloss = pCaster_origin.TV_loss_bwf(tvreg) 
+
+                        jpos = skeleton.get_listed_positions()
+
+                        # cached_weight = pCaster_origin.weights
+                        # cached_transformed_pos = pCaster_origin.cache_transformed_pos[...,:3]
+                        # # print("cached_weight", cached_weight.shape, "cached_transformed_pos", cached_transformed_pos.shape)
+                        # pos_central = torch.mean(cached_weight.unsqueeze(-1) * cached_transformed_pos.permute(1,0,2), dim=0)
+                        # central_loss = torch.mean(pos_central ** 2)
+                        # rest_loss = central_loss
+
+                        # w_sum, sigma = tensorf.occupancy.view(-1), tensorf.weights_sum.view(-1)
+                        # w_sum = clip_weight(w_sum, thresh = 0.5)
+                        # sigma = clip_weight(sigma, thresh = 0.1)
+                        # # print(torch.max(sigma), torch.min(sigma))
+                        # # print("sigma", sigma.shape, "w_sum", w_sum.shape)
+                        # sigma_loss = torch.mean((w_sum - sigma)**2)
+                        # linearloss = sigma_loss
+
+
+
+                        
+                        j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
+                        j_weights_sum = torch.sum(j_weights, dim=1)
+                        j_weights_sum = torch.clamp(j_weights_sum, min=1e-6)
+                        j_weights = j_weights / j_weights_sum.unsqueeze(1)
+                        j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
+                        j_w_loss = torch.mean(j_w_loss ** 2)
+                        eloss = j_w_loss
+
+                        total_loss += j_w_loss * 1
+
+                        # total_loss += tvloss  * 0.1
+
+                        total_loss += rest_loss * 0.1
+
+                        total_loss += linearloss * 0.1
 
                     if args.caster == "sh" and not args.use_gt_skeleton:
                         pass
                     if args.free_opt3:
                         if args.caster == "mlp":
-                            num_sample = 10000
-                            eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
-                            raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                            eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                            eloss = eloss.mean() * 0.1
+                            # num_sample = 10000
+                            # eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
+                            # raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                            # eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                            # eloss = eloss.mean() * 0.1
+
+                            cached_weight = pCaster_origin.weights
+                            cached_transformed_pos = pCaster_origin.cache_transformed_pos[...,:3]
+                            # print("cached_weight", cached_weight.shape, "cached_transformed_pos", cached_transformed_pos.shape)
+                            pos_central = torch.mean(cached_weight.unsqueeze(-1) * cached_transformed_pos.permute(1,0,2), dim=0)
+                            central_loss = torch.mean(pos_central ** 2)
+                            rest_loss = central_loss
+
+                            w_sum, sigma = tensorf.occupancy.view(-1), tensorf.weights_sum.view(-1)
+                            w_sum = clip_weight(w_sum, thresh = 0.5)
+                            sigma = clip_weight(sigma, thresh = 0.1)
+                            # print(torch.max(sigma), torch.min(sigma))
+                            # print("sigma", sigma.shape, "w_sum", w_sum.shape)
+                            sigma_loss = torch.mean((w_sum - sigma)**2)
+                            linearloss = sigma_loss
                             # print(eloss)
-                            total_loss += eloss
+                            
 
                             jpos = skeleton.get_listed_positions()
                             j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
@@ -505,9 +602,17 @@ def skeleton_optim(rank, args, n_gpu = 1):
                             j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
                             j_w_loss = torch.mean(j_w_loss ** 2)
                             total_loss += j_w_loss * 1
-                            tvloss = j_w_loss
+                            eloss = j_w_loss
 
-                            # exit()
+                            total_loss += eloss
+                            
+                            total_loss += j_w_loss * 1
+
+                            total_loss += tvloss  * 0.1
+
+                            total_loss += rest_loss * 0.1
+
+                            total_loss += sigma_loss * 0.1
 
                         else:
                             num_sample = 10000
@@ -572,11 +677,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
                             f'Iteration {iteration:05d}:'
                             # + f' train_psnr = {float(np.mean(PSNRs)):.2f}'
                             # + f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
-                            + f' mse = {loss:.6f}'
-                            + f' tvloss = {tvloss:.6f}'
-                            # + f' linearloss = {linearloss:.6f}'
-                            # + f' restloss = {rest_loss:.6f}'
-                            + f' elastic_loss = {eloss:.6f}'
+                            + f' mse = {loss:.4f}'
+                            + f' tvloss = {tvloss*1000:.4f}'
+                            + f' linearloss = {linearloss:.4f}'
+                            + f' restloss = {rest_loss:.4f}'
+                            + f' elastic_loss = {eloss:.4f}'
 
                         )
                         PSNRs = []

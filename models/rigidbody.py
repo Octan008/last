@@ -85,7 +85,7 @@ def exp_so3(w: torch.tensor, theta: torch.tensor) -> torch.tensor:
     """
     W = skew(w)
     W2 =( W.permute(2,0,1) @ W.permute(2,0,1)).permute(1,2,0)
-    tmp = torch.eye(3).to(w.device).unsqueeze(-1).expand( -1, -1, theta.shape[-1]) + torch.sin(theta) * W + (1.0 - torch.cos(theta)) * W2
+    tmp = torch.eye(3, device = w.device).unsqueeze(-1).expand( -1, -1, theta.shape[-1]) + torch.sin(theta) * W + (1.0 - torch.cos(theta)) * W2
     # tmp = tmp.permute(2,0,1) @ W.permute(2,0,1)
     return tmp
     # return torch.eye(3).to(w.device).unsqueeze(-1).expand( -1, -1, theta.shape[-1]) + torch.sin(theta) * W + (1.0 - torch.cos(theta)) * W @ W
@@ -111,7 +111,7 @@ def exp_se3(S: torch.tensor, theta: torch.tensor) -> torch.tensor:
     W = skew(w)
     W2 = (W.permute(2,0,1) @ W.permute(2,0,1)).permute(1,2,0)
     R = exp_so3(w, theta)
-    tmp = theta * torch.eye(3).to(w.device).unsqueeze(-1).expand(-1, -1, theta.shape[-1]) + (1.0 - torch.cos(theta)) * W + (theta - torch.sin(theta)) * W2
+    tmp = theta * torch.eye(3, device = w.device).unsqueeze(-1).expand(-1, -1, theta.shape[-1]) + (1.0 - torch.cos(theta)) * W + (theta - torch.sin(theta)) * W2
     # tmp = tmp.permute(2,0,1) @ W.permute(2,0,1)
     tmp = tmp.permute(2,0,1)
     p =  tmp @ v.permute(1,0).unsqueeze(-1)

@@ -1,6 +1,6 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  Green_bwf
+expname =  #Green_bwf_fast
 basedir = "./#refreshlog"
 #basedir = "./#log_trash"
 add_timestamp = 1
@@ -9,7 +9,7 @@ local_batching = 0
 caster = bwf
 use_gt_skeleton = 0
 #free_opt2 = 1 # direct_map
-JOKE = 0
+JOKE =0
 
 pose_type = euler
 
@@ -37,7 +37,7 @@ upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
 N_vis = 2
-vis_every = 4000
+vis_every = 10000
 step_ratio = 0.5
 
 render_test = 1

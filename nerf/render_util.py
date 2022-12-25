@@ -15,6 +15,7 @@ from functools import partial
 import functorch
 
 import time
+from .rigidbody import * 
 
 # from pytorch3d import transforms as p3d_transforms
 
@@ -124,10 +125,6 @@ def compute_weights(xyzs, joints):
         if j.tail:
             weights = weights*0.0
         weights_list.append(weights)
-        # print(j.name, j.global_pos(ngp=True), weights.shape)
-        # print(torch.min(weights))
-        # print(torch.max(weights))
-        # print()
     
     weights_list = torch.stack(weights_list, dim=0)
     # exit("render_util, compute_weights")
@@ -269,38 +266,47 @@ def make_joints_from_blender(file_path, device="cuda"):
 
 
 
-def cast_positions(positions, joints, weights_list = None):
-    if weights_list is None:
-        weights_list = []
-        for j in joints:
-            weights = (positions - j.global_pos(ngp=True)).to(torch.float32).to(positions.device)
-            weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
-            weights = torch.exp(-weights*10)
-            weights_list.append(weights)
-        weights_list = torch.stack(weights_list, dim=0)
-        weights_sum = weights_list.sum(dim=0)
-        weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
-    else:
-        weights_sum = weights_list.sum(dim=0)
-        weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
+# def cast_positions(positions, joints, weights_list = None):
+#     if weights_list is None:
+#         weights_list = []
+#         for j in joints:
+#             weights = (positions - j.global_pos(ngp=True)).to(torch.float32).to(positions.device)
+#             weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
+#             weights = torch.exp(-weights*10)
+#             weights_list.append(weights)
+#         weights_list = torch.stack(weights_list, dim=0)
+#         weights_sum = weights_list.sum(dim=0)
+#         weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
+#     else:
+#         weights_sum = weights_list.sum(dim=0)
+#         weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
  
-    ones = torch.ones(positions.shape[0], device=positions.device,  dtype=torch.float32).unsqueeze(1)
-    casted = torch.zeros(positions.shape[0],4, device=positions.device,  dtype=torch.float32).unsqueeze(2)
-    weights_list = weights_list/weights_sum
-    positions = torch.cat([positions, ones], dim=1)
+#     ones = torch.ones(positions.shape[0], device=positions.device,  dtype=torch.float32).unsqueeze(1)
+#     casted = torch.zeros(positions.shape[0],4, device=positions.device,  dtype=torch.float32).unsqueeze(2)
+#     weights_list = weights_list/weights_sum
+#     positions = torch.cat([positions, ones], dim=1)
     
-    for i, j in enumerate(joints):
-        mat = j.inv_totalTransform(ngp=True).unsqueeze(0).expand(positions.shape[0],-1,-1)
+#     for i, j in enumerate(joints):
+#         mat = j.inv_totalTransform(ngp=True).unsqueeze(0).expand(positions.shape[0],-1,-1)
 
-        casted = casted  + torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
-        # if torch.isnan(casted).any() or torch.isinf(casted).any():
-        #     raise ValueError("error!")
-    del ones, weights_list, positions, mat
-    return torch.squeeze(casted)[...,:3]
+#         casted = casted  + torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
+#         # if torch.isnan(casted).any() or torch.isinf(casted).any():
+#         #     raise ValueError("error!")
+#     del ones, weights_list, positions, mat
+#     return torch.squeeze(casted)[...,:3]
 
 
 
 def euler_to_matrix(angle = None, translate = None):
+    # if True:
+    #     eps = 1e-6
+    #     w = angle.unsqueeze(-1)
+    #     theta  = torch.sum(w*w, axis=-1)
+    #     theta = torch.clamp(theta, min = eps).sqrt()
+        
+    #     w = w/theta.unsqueeze(-1)
+    #     transform = exp_so3(w, theta).permute(2,0,1)
+    #     return transform
     mat = torch.eye(4, device=torch.device(angle.device))
     
     if translate is not None:
@@ -323,17 +329,6 @@ def euler_to_matrix(angle = None, translate = None):
             [0.0,0.0,0.0,1.0], device=angle.device
         ).unsqueeze(1)], dim=1)
 
-# def euler_to_matrix_batch_new(angle=None, top_batching=False):
-#     if top_batching:
-#         mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle[...]), convention="XYZ")
-#         mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0).unsqueeze(0).repeat(angle.shape[0], 1, 1)], dim=1)
-#         mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(0).t().unsqueeze(0).repeat(angle.shape[0], 1, 1)], dim=-1)
-#         return mat
-#     else:
-#         mat = p3d_transforms.euler_angles_to_matrix(torch.deg2rad(angle[...].permute(1,0)), convention="XYZ")
-#         mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(0).unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=1)
-#         mat = torch.cat([mat, torch.tensor([0.0,0.0,0.0,1.0], device=angle.device).unsqueeze(0).t().unsqueeze(0).repeat(angle.shape[1], 1, 1)], dim=-1)
-#         return mat.permute(1,2,0)
 
 def euler_to_matrix_batch(angle = None, top_batching=False):
     # mat = torch.eye(4, device=torch.device(my_torch_device))
@@ -341,6 +336,16 @@ def euler_to_matrix_batch(angle = None, top_batching=False):
     # if translate is not None:
     #     print(mat[:3, 3].shape, translate.shape)
     #     mat[:3, 3] = translate
+    # if True:
+    #     eps = 1e-6
+    #     w = angle.view(-1,3)
+    #     theta  = torch.sum(w*w, axis=-1)
+    #     theta = torch.clamp(theta, min = eps).sqrt()
+        
+    #     w = w/theta.unsqueeze(-1)
+    #     transform = exp_so3(w, theta).permute(2,0,1)
+    #     return transform
+
     if top_batching:
         angle = angle.permute(1,0)
     
@@ -370,10 +375,6 @@ def make_transform(angle=None, translate = None):
 #
 
 def each_dot(a,b):
-    # tmp = torch.zeros_like(a[...,0])
-    # for i in range(a.shape[-1]):
-    #     tmp += a[...,i] * b[...,i]
-    # return tmp
     return torch.sum(a*b, dim=-1)
 
 
@@ -413,6 +414,7 @@ class Joint():
             torch.mv(self.global_transform(), self.mytensor([   0,    0, 0.05, 1]))
         ]
         self.first_pos = self.global_pos();
+
     def set_as_root(self):
         self.root = True
         self.joints = listify_skeleton(self)
@@ -424,6 +426,7 @@ class Joint():
         for c in self.children:
             res_depth = max(res_depth, c.compute_depth(self.depth))
         return res_depth
+
     def compute_transform_ids(self, ids):
         ids.append(self.id)
         self.ids = copy.deepcopy(ids)
@@ -454,11 +457,18 @@ class Joint():
     def matrix_to_euler_pos(self, matrix, debug_p3d = False):
         if debug_p3d:
             raise ValueError("debug_p3d")
+        
             # return torch.rad2deg(p3d_transforms.matrix_to_euler_angles(matrix[...,:3,:3], convention="XYZ"))
         # matrix = matrix.t()
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
+        # if True:
+        #     theta = torch.acos((r11+r22+r33-1)/2.0)
+        #     nx = (r32-r23)/(2*torch.sin(theta))
+        #     ny = (r13-r31)/(2*torch.sin(theta))
+        #     nz = (r21-r12)/(2*torch.sin(theta))
+        #     return torch.stack([nx, ny, nz], dim=0) * theta
         # theta1 = torch.arctan(-(r23 / r33))
         # theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
         # theta3 = torch.arctan(-(r12 / r11))
@@ -486,6 +496,12 @@ class Joint():
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
+        # if True:
+        #     theta = torch.acos((r11+r22+r33-1)/2.0)
+        #     nx = (r32-r23)/(2*torch.sin(theta))
+        #     ny = (r13-r31)/(2*torch.sin(theta))
+        #     nz = (r21-r12)/(2*torch.sin(theta))
+        #     return torch.stack([nx, ny, nz], dim=0) * theta
         # theta1 = torch.arctan(-r23 / r33)
         # theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
         # theta3 = torch.arctan(-r12 / r11)
