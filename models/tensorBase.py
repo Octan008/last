@@ -749,24 +749,6 @@ class TensorBase(torch.nn.Module):
 
         # Point Casting
         if not self.data_preparation:
-            # xyz_slice = xyz_sampled.reshape(-1, 3).shape[0]
-            # tmp = torch.cat([xyz_sampled.reshape(-1, 3),(xyz_sampled-viewdirs).reshape(-1, 3)], dim=0)
-            # self.joints = listify_skeleton(self.skeleton)
-            # weights = self.get_SH_vals(xyz_sampled.reshape(-1, 3), self.sh_feats, transforms, self.skeleton.get_listed_positions_first())
-
-
-            # weights = torch.cat([weights, weights], dim=0)
-            # # taihi = tmp
-            # tmp =  weighted_transformation(tmp, weights, transforms)
-
-            
-            # #debug
-            # xyz_sampled, viewdirs = tmp[:xyz_slice], tmp[:xyz_slice] - tmp[xyz_slice:]
-            # xyz_sampled = xyz_sampled.reshape(shape[0],shape[1], 3)
-            # viewdirs = viewdirs.reshape(shape[0],shape[1], 3)
-
-            # dist weights
-            # self.caster.set_joints(self.joints)
             if_cast = True
             torch.cuda.empty_cache()
             if self.print_time  : start = time.time()
@@ -784,10 +766,9 @@ class TensorBase(torch.nn.Module):
                 # if not self.args.free_opt2:
                 self.caster_weights = self.caster_origin.get_weights()#N,J
                 weights_sum = torch.sum(self.caster_weights, dim=1)
-                # self.bg_alpha = clip_weight(weights_sum, thresh = self.clip_thresh).view(shape[0], -1)
-                self.bg_alpha = clip_weight(weights_sum, thresh = 0.2).view(shape[0], -1)
+                # self.bg_alpha = clip_weight(weights_sum, thresh = 0.2).view(shape[0], -1)
+                self.bg_alpha = clip_weight(weights_sum, thresh = 1e-6).view(shape[0], -1)
                 castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
-                # castweight_mask = weights_sum.view(shape[0], -1) > 0.8
                 if self.args.free_opt9:
                     # print(self.caster_weights.shape, shape)
                     weights_sum = torch.clamp(weights_sum, min=1e-7)
@@ -801,10 +782,7 @@ class TensorBase(torch.nn.Module):
                     # print(weights_color.view((shape[1], shape[0], weights_color.shape[-1], )))
                     weights_color = torch.gather(weights_color, 1, id_weight_render.view(-1,1,1).expand(-1,-1,weights_color.shape[-1]))
                     self.render_weights = weights_color.squeeze(1)
-                    # xyz_sampled += torch.tensor([0,0,1], device = xyz_sampled.device).view(1,1,3)
-                    # return self.render_weights[...,:3], self.render_weights[...,3:4]
-                    # exit("fea")
-                
+
 
 
             if self.print_time  : print("caster time", time.time()-start)
@@ -853,6 +831,8 @@ class TensorBase(torch.nn.Module):
         self.raw_sigma = weight
         if not self.args.free_opt2 and not self.data_preparation:
             weight = weight * self.bg_alpha
+            # print(weight.shape, self.caster.test_rad.shape)
+            # weight = weight * self.caster.test_rad.view(shape[:2])
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
         # print("app_mask", app_mask.shape, app_mask.sum())

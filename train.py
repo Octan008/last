@@ -422,7 +422,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
     for iteration in pbar:
         # with torch.autograd.profiler.profile(use_cuda=True) as prof:
         # if True:
-        if args.caster == "grid_map" or args.caster == "bwf":
+        if args.caster == "grid_map":
             with torch.no_grad():
                 if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
                     if rank == rank_criteria:
@@ -551,21 +551,21 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
 
                         
-                        j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
-                        j_weights_sum = torch.sum(j_weights, dim=1)
-                        j_weights_sum = torch.clamp(j_weights_sum, min=1e-6)
-                        j_weights = j_weights / j_weights_sum.unsqueeze(1)
-                        j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
-                        j_w_loss = torch.mean(j_w_loss ** 2)
-                        eloss = j_w_loss
+                        # j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
+                        # j_weights_sum = torch.sum(j_weights, dim=1)
+                        # j_weights_sum = torch.clamp(j_weights_sum, min=1e-6)
+                        # j_weights = j_weights / j_weights_sum.unsqueeze(1)
+                        # j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
+                        # j_w_loss = torch.mean(j_w_loss ** 2)
+                        # eloss = j_w_loss
 
-                        total_loss += j_w_loss * 1
+                        # total_loss += j_w_loss * 1
 
-                        # total_loss += tvloss  * 0.1
+                        # # total_loss += tvloss  * 0.1
 
-                        total_loss += rest_loss * 0.1
+                        # total_loss += rest_loss * 0.1
 
-                        total_loss += linearloss * 0.1
+                        # total_loss += linearloss * 0.1
 
                     if args.caster == "sh" and not args.use_gt_skeleton:
                         pass

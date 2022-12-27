@@ -740,7 +740,7 @@ class BWCaster(CasterBase):
         return grad_vars
 
     def init_svd_volume(self, res, device):
-        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.032, device)
+        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
 
     def init_one_svd(self, n_component, gridSize, scale, device):
@@ -840,7 +840,7 @@ class BWCaster(CasterBase):
         alphas = torch.exp(-dists)
         result = self.normalize_coord(result[:,:,:3])
         bwf = self.sample_BWfield(result) # [j,sample]
-
+        self.test_rad = alphas[0]
         bwf = bwf * alphas
         # return torch.transpose(bwf, 0 , 1)
         return bwf.permute(1,0)
