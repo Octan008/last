@@ -11,7 +11,7 @@ from functools import partial
 
 
 class py_FFMLP(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim, num_layers, device, activation='relu', std=-1.0):
+    def __init__(self, input_dim, output_dim, hidden_dim, num_layers, device, activation='relu', std=-1.0, bias = False, skip = []):
         super().__init__()
 
         self.input_dim = input_dim
@@ -36,14 +36,20 @@ class py_FFMLP(nn.Module):
         self.Network = nn.Sequential().to(device)
         for i in range(self.num_layers):
             if i == 0:
-                self.Network.add_module('Linear'+str(i), nn.Linear(self.input_dim, self.hidden_dim, bias=False).to(device))
-                self.Network.add_module('Activation'+str(i), nn.ReLU().to(device))
+                _in = self.input_dim
+                _out = self.hidden_dim
+                
             elif i == self.num_layers - 1:
-                self.Network.add_module('Linear'+str(i), nn.Linear(self.hidden_dim, self.output_dim, bias=False).to(device))
-                self.Network.add_module('Activation'+str(i), nn.ReLU().to(device))
+                _in = self.hidden_dim
+                _out = self.output_dim
             else:
-                self.Network.add_module('Linear'+str(i), nn.Linear(self.hidden_dim, self.hidden_dim, bias=False).to(device))
-            self.Network.add_module('Activation', nn.ReLU().to(device))
+                _in = self.hidden_dim
+                _out = self.hidden_dim
+                
+            self.Network.add_module('Linear'+str(i), nn.Linear(_in, _out, bias=bias).to(device))
+            if not i == self.num_layers - 1:
+                self.Network.add_module('Activation'+str(i), nn.ReLU().to(device))
+
 
 
         # self.num_parameters = hidden_dim * (input_dim + hidden_dim * (num_layers - 1) + self.padded_output_dim)

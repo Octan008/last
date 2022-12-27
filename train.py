@@ -722,7 +722,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
                                     pCaster_origin.save( f'{logfolder}/{args.expname}_pCaster_it{iteration}.th')
                                 tensorf.save(f'{logfolder}/{args.expname}_it{iteration}.th')
                                 skeleton_props ={"skeleton_dataset": skeleton_dataset}
-                                PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
+                                PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis, prtx=f'{iteration:06d}_', N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False, skeleton_props=skeleton_props , device=device)
                                 summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
                                 
 

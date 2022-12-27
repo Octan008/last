@@ -473,6 +473,8 @@ class TensorBase(torch.nn.Module):
         t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)
 
         rng = torch.arange(N_samples, device = rays_o.device)[None].float()
+
+        rng += (torch.rand(rng.shape, device=rng.device) - 0.5)
         if is_train:
             rng = rng.repeat(rays_d.shape[-2],1)
             rng += torch.rand_like(rng[:,[0]], device = rays_o.device)
@@ -485,7 +487,6 @@ class TensorBase(torch.nn.Module):
             mask_outbbox = ((self.aabb[0]>rays_pts) | (rays_pts>self.aabb[1])).any(dim=-1)
         else:
             mask_outbbox = ((self.ray_aabb[0]>rays_pts) | (rays_pts>self.ray_aabb[1])).any(dim=-1)
-
         return rays_pts, interpx, ~mask_outbbox
 
     def clamp_pts(self, pts):
@@ -521,26 +522,57 @@ class TensorBase(torch.nn.Module):
         # dense_xyz = dense_xyz
         # print(self.stepSize, self.distance_scale*self.aabbDiag)
         alpha = torch.zeros_like(dense_xyz[...,0])
+        # print("gridsize", gridSize)
+        
         for i in range(gridSize[0]):
             alpha[i] = self.compute_alpha(dense_xyz[i].view(-1,3), self.stepSize).view((gridSize[1], gridSize[2]))
+            # alpha[i] = self.compute_alpha(dense_xyz[i].view(-1,3), self.stepSize * self.distance_scale).view((gridSize[1], gridSize[2]))
         return alpha, dense_xyz
 
     @torch.no_grad()
     def updateAlphaMask(self, gridSize=(200,200,200)):
 
         alpha, dense_xyz = self.getDenseAlpha(gridSize)
+        # tmp_alpha = torch.zeros_like(alpha)
+        # print(alpha[1,1,1])
+        # st = 6
+        # tmp_alpha[st:-st, st:-st, st:-st] = alpha[st:-st, st:-st, st:-st]
+        # alpha = tmp_alpha
+       
+
         dense_xyz = dense_xyz.transpose(0,2).contiguous()
         alpha = alpha.clamp(0,1).transpose(0,2).contiguous()[None,None]
         total_voxels = gridSize[0] * gridSize[1] * gridSize[2]
 
         ks = 3
+        print(alpha.shape, torch.max(alpha), torch.min(alpha))
+
         alpha = F.max_pool3d(alpha, kernel_size=ks, padding=ks // 2, stride=1).view(gridSize[::-1])
+        # alpha = torch.nn.AvgPool3d(kernel_size=ks, padding=ks // 2, stride=1)(alpha).view(gridSize[::-1])
+        # tmp_alpha = torch.zeros_like(alpha)
+        # tmp_alpha[1:-1, 1:-1, 1:-1] = alpha[1:-1, 1:-1, 1:-1]
+        # alpha = tmp_alpha
+
+   
         alpha[alpha>=self.alphaMask_thres] = 1
         alpha[alpha<self.alphaMask_thres] = 0
+        print(alpha.shape, torch.max(alpha.view(-1,1), dim = 0), torch.min(alpha.view(-1,1), dim = 0), torch.max(dense_xyz.view(-1,3), dim = 0), torch.min(dense_xyz.view(-1,3), dim = 0))
+        print(torch.sum(alpha))
+        print(dense_xyz.shape)
+        
+
+
 
         self.alphaMask = AlphaGridMask(self.device, self.aabb, alpha)
 
+
+
         valid_xyz = dense_xyz[alpha>0.5]
+        # valid_xyz = dense_xyz[alpha>0.0]
+        # print(valid_xyz, dense_xyz.shape, alpha.shape)
+        
+        # exit()
+        print(valid_xyz.shape)
 
         xyz_min = valid_xyz.amin(0)
         xyz_max = valid_xyz.amax(0)
@@ -549,6 +581,8 @@ class TensorBase(torch.nn.Module):
 
         total = torch.sum(alpha)
         print(f"bbox: {xyz_min, xyz_max} alpha rest %%%f"%(total/total_voxels*100))
+        print(alpha.shape, torch.max(alpha), torch.min(alpha), torch.max(dense_xyz), torch.min(dense_xyz))
+        # exit()
         return new_aabb
     
     def crop_rays(self, rays_d, rays_o):
@@ -593,27 +627,36 @@ class TensorBase(torch.nn.Module):
         elif self.fea2denseAct == "relu":
             return F.relu(density_features)
 
-
+    @torch.cuda.amp.autocast(enabled=True)
     def compute_alpha(self, xyz_locs, length=1):
 
         if self.alphaMask is not None:
             alphas = self.alphaMask.sample_alpha(xyz_locs)
             alpha_mask = alphas > 0
+            # print("alphas", torch.max(alphas), torch.min(alphas))
+            # exit()
         else:
             alpha_mask = torch.ones_like(xyz_locs[:,0], dtype=bool)
             
 
         sigma = torch.zeros(xyz_locs.shape[:-1], device=xyz_locs.device)
-
+        # print(xyz_locs.shape, torch.max(xyz_locs), torch.min(xyz_locs))
         if alpha_mask.any():
+            # print("alpha_mask", alpha_mask.shape, torch.sum(alpha_mask))
             xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
             sigma_feature = self.compute_densityfeature(xyz_sampled)
+            # print("sigma", torch.max(sigma_feature), torch.min(sigma_feature))
             validsigma = self.feature2density(sigma_feature)
+            # print("valsigma", torch.max(validsigma), torch.min(validsigma))
+            sigma = sigma.to(validsigma.dtype)
             sigma[alpha_mask] = validsigma
+            # exit()
         
-
+        # print("lastsigma", torch.max(sigma), torch.min(sigma))
         alpha = 1 - torch.exp(-sigma*length).view(xyz_locs.shape[:-1])
-
+        # alpha = sigma.view(xyz_locs.shape[:-1])
+        # print("alpha", torch.max(alpha), torch.min(alpha), length)
+        # exit()
         return alpha
     def set_skeleton(self, skeleton):
         self.skeleton = skeleton
