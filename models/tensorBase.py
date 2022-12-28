@@ -103,13 +103,11 @@ def raw2alpha(sigma, dist):
 def SHRender(xyz_sampled, viewdirs, features):
     sh_mult = eval_sh_bases(2, viewdirs)[:, None]
     rgb_sh = features.view(-1, 3, sh_mult.shape[-1])
-    # print("SHRender", rgb_sh.shape)
     rgb = torch.relu(torch.sum(sh_mult * rgb_sh, dim=-1) + 0.5)
     return rgb
 
 
 def RGBRender(xyz_sampled, viewdirs, features):
-
     rgb = features
     return rgb
 
@@ -274,10 +272,6 @@ class TensorBase(torch.nn.Module):
         self.print_time = False
         self.clip_thresh = 1e-3
         
-
-            
-
-        # self.sh_feats = nn.Parameter(torch.tensor([1.0], dtype=torch.float32).unsqueeze(0).repeat(20,9).to("cuda:0"), requires_grad=True)  # (j, dim, 1)
     def set_ngprender(self, if_use_ngprender):
         self.use_ngprender = if_use_ngprender
         if self.use_ngprender:
@@ -304,7 +298,6 @@ class TensorBase(torch.nn.Module):
             self.renderModule = RGBRender
         else:
             print("Unrecognized shading module")
-            # exit()
         print("pos_pe", pos_pe, "view_pe", view_pe, "fea_pe", fea_pe)
         print(self.renderModule)
     
@@ -404,17 +397,6 @@ class TensorBase(torch.nn.Module):
             ckpt.update({'alphaMask.mask':np.packbits(alpha_volume.reshape(-1))})
             ckpt.update({'alphaMask.aabb': self.alphaMask.aabb.cpu()})
         torch.save(ckpt, path)
-    # def save_sh(self, path):
-    #     ckpt = {'state_dict': self.state_dict()}
-    # def save_anim_ckpt(self, path):
-    #     kwargs = self.get_kwargs()
-    #     ckpt = {'kwargs': kwargs, 'state_dict': self.state_dict()}
-    #     if self.alphaMask is not None:
-    #         alpha_volume = self.alphaMask.alpha_volume.bool().cpu().numpy()
-    #         ckpt.update({'alphaMask.shape':alpha_volume.shape})
-    #         ckpt.update({'alphaMask.mask':np.packbits(alpha_volume.reshape(-1))})
-    #         ckpt.update({'alphaMask.aabb': self.alphaMask.aabb.cpu()})
-    #     torch.save(ckpt, path)
     
     def load(self, ckpt):
         if self.use_ngprender:
@@ -633,31 +615,19 @@ class TensorBase(torch.nn.Module):
 
         if self.alphaMask is not None:
             alphas = self.alphaMask.sample_alpha(xyz_locs)
-            alpha_mask = alphas > 0
-            # print("alphas", torch.max(alphas), torch.min(alphas))
-            # exit()
         else:
             alpha_mask = torch.ones_like(xyz_locs[:,0], dtype=bool)
             
 
         sigma = torch.zeros(xyz_locs.shape[:-1], device=xyz_locs.device)
-        # print(xyz_locs.shape, torch.max(xyz_locs), torch.min(xyz_locs))
         if alpha_mask.any():
-            # print("alpha_mask", alpha_mask.shape, torch.sum(alpha_mask))
             xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
             sigma_feature = self.compute_densityfeature(xyz_sampled)
-            # print("sigma", torch.max(sigma_feature), torch.min(sigma_feature))
             validsigma = self.feature2density(sigma_feature)
-            # print("valsigma", torch.max(validsigma), torch.min(validsigma))
             sigma = sigma.to(validsigma.dtype)
             sigma[alpha_mask] = validsigma
-            # exit()
-        
-        # print("lastsigma", torch.max(sigma), torch.min(sigma))
+
         alpha = 1 - torch.exp(-sigma*length).view(xyz_locs.shape[:-1])
-        # alpha = sigma.view(xyz_locs.shape[:-1])
-        # print("alpha", torch.max(alpha), torch.min(alpha), length)
-        # exit()
         return alpha
     def set_skeleton(self, skeleton):
         self.skeleton = skeleton
@@ -715,15 +685,8 @@ class TensorBase(torch.nn.Module):
 
         #skeleton parsing -> transforms
         if not self.data_preparation:
-            # transforms = self.skeleton.rotations_to_invs(gt_skeleton_pose)
-            # print("a", self.skeleton.get_listed_rotations())
             if skeleton_props is not None:
-                # print("frame_pose_set")
                 self.frame_pose = skeleton_props["frame_pose"]
-
-            # transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
-            # if torch.isnan(self.frame_pose).any() or torch.isinf(self.frame_pose).any():
-            #     raise ValueError("justaftergetweights"+"nan or inf in weights")
 
             if self.print_time  : start = time.time()
             if self.args.use_indivInv:
@@ -731,27 +694,18 @@ class TensorBase(torch.nn.Module):
             else:
                 if self.args.free_opt4:
                     transforms = self.skeleton.para_rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
-                    # transforms = self.skeleton.para_rotations_to_transforms(self.frame_pose, type=self.posetype)
                 else:
                     transforms = self.skeleton.rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
-
-            # if torch.isnan(transforms ).any() or torch.isinf(transforms ).any():
-            #     raise ValueError("justaftergetweights"+"nan or inf in weights")
             if self.print_time  : print("transform time", time.time()-start)
 
             draw_joints = self.render_jointmask
             if draw_joints:
-                # self.skeleton.transformNet(self.frame_pose,type=self.posetype)     
-                # self.skeleton.apply_transforms_top(self.frame_pose, use_precomp = False, type=self.posetype)
                 draw_mask = self.skeleton.draw_mask_all_cached(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
-                # draw_mask = self.skeleton.draw_mask_all(rays_chunk[:, :3], rays_chunk[:, 3:6], 0.05)
-            # print("c", self.skeleton.get_listed_rotations())
-        
+
 
         # Point Casting
         if not self.data_preparation:
             if_cast = True
-            torch.cuda.empty_cache()
             if self.print_time  : start = time.time()
             if if_cast:
                 if self.args.free_opt9:
@@ -767,7 +721,6 @@ class TensorBase(torch.nn.Module):
                 # if not self.args.free_opt2:
                 self.caster_weights = self.caster_origin.get_weights()#N,J
                 weights_sum = torch.sum(self.caster_weights, dim=1)
-                # self.bg_alpha = clip_weight(weights_sum, thresh = 0.2).view(shape[0], -1)
                 self.bg_alpha = clip_weight(weights_sum, thresh = 1e-6).view(shape[0], -1)
                 castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
                 if self.args.free_opt9:
@@ -789,12 +742,12 @@ class TensorBase(torch.nn.Module):
             if self.print_time  : print("caster time", time.time()-start)
                     
 
-            save_npz = False;
-            if save_npz:
-                save_npz = {}
-                save_npz["weights"] = self.caster_weights.cpu().numpy()
-                save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
-            torch.cuda.empty_cache()
+            # save_npz = False;
+            # if save_npz:
+            #     save_npz = {}
+            #     save_npz["weights"] = self.caster_weights.cpu().numpy()
+            #     save_npz["xyz_sampled"] = xyz_sampled.cpu().numpy()
+            # torch.cuda.empty_cache()
 
         if self.print_time  : start = time.time()
 
@@ -816,11 +769,9 @@ class TensorBase(torch.nn.Module):
             validsigma = self.feature2density(sigma_feature)
             sigma[ray_valid] = validsigma
             
-            if not self.data_preparation and save_npz:
-                save_npz["sigma"] = sigma.cpu().numpy()
-            # print("sigma", sigma.grad_fn)
+            # if not self.data_preparation and save_npz:
+            #     save_npz["sigma"] = sigma.cpu().numpy()
             
-            # exit("amkingmasking")
         self.sigma = sigma
         
         if self.print_time  : print("sigma_time", time.time() - start)
@@ -832,11 +783,8 @@ class TensorBase(torch.nn.Module):
         self.raw_sigma = weight
         if not self.args.free_opt2 and not self.data_preparation:
             weight = weight * self.bg_alpha
-            # print(weight.shape, self.caster.test_rad.shape)
-            # weight = weight * self.caster.test_rad.view(shape[:2])
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
-        # print("app_mask", app_mask.shape, app_mask.sum())
 
         # Compute_alpha
         if self.print_time  : start = time.time()
@@ -846,14 +794,6 @@ class TensorBase(torch.nn.Module):
             valid_rgbs = self.renderModule(xyz_sampled[app_mask].view(-1,3), viewdirs[app_mask].view(-1,3), app_features)
             rgb[app_mask] = valid_rgbs
         
-
-
-        # if not self.data_preparation and save_npz:
-        #     itr = 0;    
-        #     files = glob.glob("./data_point_cloud_*.npz")
-        #     if len(files) > 0:
-        #         itr = int(files[-1].split(".")[1].split("_")[-1]) + 1
-        #     np.savez("./data_point_cloud_"+str(itr)+".npz", **save_npz)
         
 
         acc_map = torch.sum(weight, -1)
@@ -878,17 +818,13 @@ class TensorBase(torch.nn.Module):
         # return rgb_map, None # rgb, sigma, alpha, weight, bg_weight
 
     def get_density(self, xyz_sampled):
-        #xyz_sampled = xyz_sampled.reshape(-1, 3)
         sigma_feature = self.compute_densityfeature(xyz_sampled)
-        
-
         validsigma = self.feature2density(sigma_feature)
         return validsigma
     
     def get_grid_points(self, grid_sizes, box = None):
         if box is None:
             box = self.ray_aabb
-            # box = self.aabb * 0.5
             gridsize = 200
         # box_width = box[1] - box[0]
         samples_x = torch.linspace(box[0][0], box[1][0], grid_sizes[0])

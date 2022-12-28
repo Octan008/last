@@ -27,7 +27,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import random
 
 parallel = False
-# dist_test = True
 indivInv = False
 rank_criteria = 0
 mix_precision = False
@@ -169,9 +168,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
     w, h = train_dataset.img_wh
     print(w, h)
 
-    # if not args.ndc_ray:
-    #     allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
-    # trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
 
     Ortho_reg_weight = args.Ortho_weight
     print("initial Ortho_reg_weight", Ortho_reg_weight)
@@ -229,18 +225,11 @@ def skeleton_optim(rank, args, n_gpu = 1):
     skeleton_dataset.set_tails(skeleton.get_tail_ids())
     
 
-    # #NGPRender Setting
-    # tensorf.set_ngprender(args.ngp_render)
-    # if args.ckpt_ngp is not None:
-    #     tensorf.load(args.ckpt_ngp)
-
     
     sh_field = SphereHarmonicJoints(len(joints), 9)
     sh_field.to(device)
     if args.sh_feats is not None:
         feats = torch.load(args.sh_feats)
-        #sh_field.set_feats(feats)
-        # print(feats["state_dict"].keys())
         sh_field.load_state_dict(feats["state_dict"])
 
     if args.caster == "sh":
@@ -258,12 +247,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
         skip_rate = int(tensorf.nSamples / (bwf_nSamples*args.step_ratio))
         if not args.free_opt10:
             skip_rate = -1
-
-        # print(reso_cur, reso_cur_2, tensorf.gridSize_tmp, nSamples, tensorf.nSamples, skip_rate)
         pCaster_origin = BWCaster(len(joints), reso_cur_2 ,device, skip_rate = skip_rate, args = args)
-        # if args.ckpt_pcaster is not None:
-        #     ckpt = torch.load(args.ckpt_pcaster, map_location=device)
-        #     pCaster_origin.load_state_dict(ckpt["state_dict"])
     elif args.caster == "dist":
         pCaster_origin  = DistCaster()
     elif args.caster == "mlp":
@@ -302,32 +286,17 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
     pCaster_origin.set_skeleton(skeleton)
 
-    # skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')
     if args.ckpt_skeleton is not None:
         skeleton_dataset.load(torch.load(args.ckpt_skeleton, map_location=device))
 
-    # lr_grid = args.lr_grid
-    # lr_sh = args.lr_sh
-    # if args.pose_type == "euler":
-    #     lr_skel = args.lr_skel
-    # else:
-    #     lr_skel = 1e-4
 
 
     if parallel:
-
         pCaster = DDP(pCaster_origin, device_ids=[rank])
-        # if args.caster == "bwf":
-        #     grad_vars_pcaster = pCaster_origin.get_optparam_groups(lr_init_spatialxyz = lr_grid )
         tensorf.set_pointCaster(pCaster, pCaster_origin)
-
     else:
-        # tensorf_ddp = tensorf
         pCaster = pCaster_origin
-        # if args.caster == "bwf":
-        #     grad_vars_pcaster = pCaster.get_optparam_groups(lr_init_spatialxyz = lr_grid )
         tensorf.set_pointCaster(pCaster)
-
     if parallel:
         num_frames = num_frames // n_gpu
         if(rank < num_frames % n_gpu):
@@ -356,33 +325,20 @@ def skeleton_optim(rank, args, n_gpu = 1):
         if not args.use_gt_skeleton:
             params.append({'params': grad_vars_skeletonpose, 'lr': args.lr_skel})
         optimizer = torch.optim.Adam(params, betas=(0.9,0.99))
-
     elif args.caster == "dist":
         optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': args.lr_skel}], betas=(0.9,0.99))
-
     elif args.caster == "mlp":
-        
         params =  [
             {'name':'weight_nets','params': list(pCaster_origin.weight_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
             {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
         ]
-
         if not args.free_opt5:
             params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-        # if args.free_opt1:
-        #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
         if not args.use_gt_skeleton:
             params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': args.lr_skel})
         optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
 
     elif args.caster == "map":
-        # if args.free_opt3:
-        if False:
-            wd = 1e-6
-            params =  pCaster_origin.get_optparam_groups()
-            optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
-        else:
-            wd = 1e-6
             params =  [
                 {'name':'map_nets','params': list(pCaster_origin.map_nets.parameters()), 'weight_decay': wd, 'lr':1e-4},
                 {'name':'encoder','params': list(pCaster_origin.encoder.parameters()),  'lr': 2e-2}
@@ -391,10 +347,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
             params.append({'name':'pose_params','params': list(pCaster_origin.pose_params.parameters()), 'weight_decay': wd, 'lr':1e-4})
             
             params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-            # if args.free_opt1:
-            #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-            # if not args.use_gt_skeleton:
-            #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     elif args.caster == "direct_map":
             wd = 1e-6
@@ -407,10 +359,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
             params.append({'name':'interface_layer','params': list(pCaster_origin.interface_layer.parameters()), 'weight_decay': wd, 'lr': lr})
             params.append({'name':'branch_w','params': list(pCaster_origin.branch_w.parameters()), 'weight_decay': wd, 'lr': lr})
             params.append({'name':'branch_v','params': list(pCaster_origin.branch_v.parameters()), 'weight_decay': wd, 'lr': lr})
-            # if args.free_opt1:
-            #     params.append({'name':'after_layer','params': list(pCaster_origin.after_layer.parameters()), 'weight_decay': wd, 'lr': 1e-4})
-            # if not args.use_gt_skeleton:
-            #     params.append({'name':'skeleton', 'params': grad_vars_skeletonpose, 'lr': lr_skel})
             optimizer = torch.optim.Adam( params, betas=(0.9,0.99))
     elif args.caster == "forward":
         optimizer = torch.optim.Adam( [{'params': grad_vars_skeletonpose, 'lr': args.lr_skel}], betas=(0.9,0.99))
@@ -447,8 +395,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
                 itr += 1
                 continue
-            # print(itr)
-            # print(allanimframes[itr+num_frames*rank_diff])
             
         with torch.cuda.amp.autocast(): 
             # # JOKE skeleton_optim
@@ -536,7 +482,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
 
                     if args.caster == "bwf":
-                        tvloss = pCaster_origin.TV_loss_bwf(tvreg) * 0.1
+                        tvloss = pCaster_origin.TV_loss_bwf(tvreg) * 100
                         # l1loss = pCaster_origin.L1_loss_bwf() * 1e-5
 
                         jpos = skeleton.get_listed_positions()
@@ -595,7 +541,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
                             cached_weight = pCaster_origin.weights
                             cached_transformed_pos = pCaster_origin.cache_transformed_pos[...,:3]
-                            # print("cached_weight", cached_weight.shape, "cached_transformed_pos", cached_transformed_pos.shape)
                             pos_central = torch.mean(cached_weight.unsqueeze(-1) * cached_transformed_pos.permute(1,0,2), dim=0)
                             central_loss = torch.mean(pos_central ** 2)
                             rest_loss = central_loss
@@ -603,11 +548,10 @@ def skeleton_optim(rank, args, n_gpu = 1):
                             w_sum, sigma = tensorf.occupancy.view(-1), tensorf.weights_sum.view(-1)
                             w_sum = clip_weight(w_sum, thresh = 0.5)
                             sigma = clip_weight(sigma, thresh = 0.1)
-                            # print(torch.max(sigma), torch.min(sigma))
-                            # print("sigma", sigma.shape, "w_sum", w_sum.shape)
+ 
                             sigma_loss = torch.mean((w_sum - sigma)**2)
                             linearloss = sigma_loss
-                            # print(eloss)
+
                             
 
                             jpos = skeleton.get_listed_positions()
@@ -675,10 +619,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
                     loss = loss.detach().item()
 
-                    # if torch.isnan(total_loss).any() or torch.isinf(total_loss).any():
-                    #     print("isnanisany", torch.isnan(total_loss).any(),  torch.isinf(total_loss).any())
-                    #     raise ValueError("nan or inf")
-                    
                     PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
                     summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
                     summary_writer.add_scalar('train/mse', loss, global_step=iteration)
@@ -739,7 +679,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     #     grad_vars = skeleton_dataset.parameters()
                     #     optimizer = torch.optim.Adam([{'params': grad_vars, 'lr': args.lr_init}], betas=(0.9,0.99))
             itr += 1
-        # print(prof.key_averages().table(sort_by="cuda_time_total"))
 
     if rank == rank_criteria:
         skeleton_dataset.save(f'{logfolder}/{args.expname}_skeleton.th')

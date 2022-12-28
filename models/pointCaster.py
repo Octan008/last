@@ -53,12 +53,22 @@ class CasterBase(nn.Module):
             else:
                 out_dim = hidden_dim
             input_sequencial.add_module("main_linear_%d" % l, nn.Linear(in_dim, out_dim, bias=if_use_bias).to(device))
-            # sigma_net.append(nn.Linear(in_dim, out_dim, bias=if_use_bias))
-        # return nn.Sequential(*sigma_net)
-        # return *sigma_net
 
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         pass
+    def recoverty_skip(self, xyz_sampled, shape, padding):
+        dim = xyz_sampled.shape[-1]
+        xyz_sampled = xyz_sampled.view(shape[0], -1, dim)
+        res = xyz_sampled[:,:-2,:].unsqueeze(-2).expand(shape[0], -1, self.skip_rate+1 ,dim)
+        res2 = xyz_sampled[:,1:-1,:].unsqueeze(-2).expand(shape[0], -1, self.skip_rate+1 ,dim)
+        rate = torch.linspace(0, 1, self.skip_rate+1).view(1,1,-1,1).expand(shape[0], -1, self.skip_rate+1, 1).to(xyz_sampled.device)
+        tmp = res * (1-rate) + res2 * rate
+        add = xyz_sampled[:,-2:-1,:].unsqueeze(-2).expand(shape[0], -1, padding ,dim)
+        add2 = xyz_sampled[:,-1:,:].unsqueeze(-2).expand(shape[0], -1, padding ,dim)
+        rate_add = torch.linspace(0, 1, padding).view(1,1,-1,1).expand(shape[0], -1, padding, 1).to(xyz_sampled.device)
+        tmp_add = add * (1-rate_add) + add2 * rate_add
+        result = torch.cat([tmp[:,:,:-1,:].reshape(shape[0], -1, dim), tmp_add[:,:,:,:].reshape(shape[0], -1, dim)], dim = 1)
+        return result
     
     def save(self, path):
         kwargs = self.get_kwargs()
@@ -72,8 +82,6 @@ class CasterBase(nn.Module):
         self.skeleton = skeleton
         self.joints = listify_skeleton(self.skeleton)
 
-    # def set_joints(self, joints):
-    #     self.joints = joints
     def set_args(self, args):
         self.args = args
     def set_aabbs(self, aabb, rayaabb):
@@ -755,44 +763,24 @@ class BWCaster(CasterBase):
             line_coef.append(
                 torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
-    
-    def recoverty_skip(self, xyz_sampled, shape, padding):
-        dim = xyz_sampled.shape[-1]
-        xyz_sampled = xyz_sampled.view(shape[0], -1, dim)
-        res = xyz_sampled[:,:-2,:].unsqueeze(-2).expand(shape[0], -1, self.skip_rate+1 ,dim)
-        res2 = xyz_sampled[:,1:-1,:].unsqueeze(-2).expand(shape[0], -1, self.skip_rate+1 ,dim)
-        rate = torch.linspace(0, 1, self.skip_rate+1).view(1,1,-1,1).expand(shape[0], -1, self.skip_rate+1, 1).to(xyz_sampled.device)
-        tmp = res * (1-rate) + res2 * rate
-        add = xyz_sampled[:,-2:-1,:].unsqueeze(-2).expand(shape[0], -1, padding ,dim)
-        add2 = xyz_sampled[:,-1:,:].unsqueeze(-2).expand(shape[0], -1, padding ,dim)
-        rate_add = torch.linspace(0, 1, padding).view(1,1,-1,1).expand(shape[0], -1, padding, 1).to(xyz_sampled.device)
-        tmp_add = add * (1-rate_add) + add2 * rate_add
-        result = torch.cat([tmp[:,:,:-1,:].reshape(shape[0], -1, dim), tmp_add[:,:,:,:].reshape(shape[0], -1, dim)], dim = 1)
-        return result
         
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
+        
         if self.skip_rate > 0:
-            # tmp_xyz = xyz_sampled
-            xyz_sampled = xyz_sampled[:, ::self.skip_rate, :]
-            viewdirs = viewdirs[:, ::self.skip_rate, :]
+            xyz_sampled, viewdirs = xyz_sampled[:, ::self.skip_rate, :], viewdirs[:, ::self.skip_rate, :]
             padding = 1
             if shape[1] % self.skip_rate != 1:
                 padding = shape[1] % self.skip_rate
                 xyz_sampled = torch.cat([xyz_sampled, xyz_sampled[:, -1:, :]], dim=1)
                 viewdirs = torch.cat([viewdirs, viewdirs[:, -1:, :]], dim=1)
-            # xyz_sampled = self.recoverty_skip(xyz_sampled, shape, padding)
-            # print(torch.mean((tmp_xyz - xyz_sampled) ** 2))
-            # exit()
+
         # xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
-        self.weights = weights
-        self.cache_transforms = transforms
-        self.restore_xyz = xyz_sampled
+        self.weights, self.cache_transforms, self.restore_xyz = weights, transforms, xyz_sampled
 
         xyz_sampled, viewdirs = weighted_transformation(xyz_sampled.view(-1, 3), weights.to(torch.float32), transforms, viewdirs.contiguous().view(-1, 3), if_transform_is_inv=self.args.use_indivInv)
-        xyz_sampled = xyz_sampled.view(shape[0], -1, 3)
-        viewdirs = viewdirs.view(shape[0], -1, 3)
+        xyz_sampled, viewdirs = xyz_sampled.view(shape[0], -1, 3), viewdirs.view(shape[0], -1, 3)
 
         if self.skip_rate > 0:
             xyz_sampled = self.recoverty_skip(xyz_sampled, shape, padding)

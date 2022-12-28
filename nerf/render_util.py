@@ -646,11 +646,6 @@ class Joint():
 
         res = [torch.matmul(t, self.bind_inv)]
 
-        # if True or self.name in ['root', 'Sharkthroat', 'SharkHead', 'SharkHead_tail', 'SharkJaw', 'SharkJaw_tail', 'Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
-        # if self.name in ['Sharktail0', 'Sharktail1', 'Sharktail2', 'Sharktail3', 'Sharktail4', 'Sharktail4_tail', 'Righhfena1', 'Rightfena2', 'Rightfena3', 'Rightfena3_tail', 'Leftfena1', 'Leftfena2', 'Leftfena3', 'Leftfena3_tail']:
-        #     res = [self.myeye(4)]
-
-        # print("compute_inv : ", time.perf_counter() - comp_start)
 
         for c in self.children:
             res.extend(c.rotations_to_transforms(poses, parent=t, type=type))
@@ -734,6 +729,7 @@ class Joint():
             res.extend(c.get_listed_parents(self.id))
         self.parent_id_list = torch.tensor(res, device = self.device)
         return res
+
     def get_listed_positions_center(self, use_cached=False):
         if use_cached:
             pos = torch.matmul(self.precomp_forward_global_transforms, torch.tensor([0.0,0.0,0.0,1.0], device = self.precomp_forward_global_transforms.device).unsqueeze(0).repeat(self.precomp_forward_global_transforms.shape[0],1).unsqueeze(-1)).squeeze()
@@ -743,12 +739,6 @@ class Joint():
         pos = torch.stack(res, dim=0)
         parents = torch.gather(pos, 0, self.parent_id_list.unsqueeze(-1).repeat(1,3))
         return (pos + parents)/2
-
-    # def get_listed_positions_first(self):
-    #     res = [self.first_pos]
-    #     for c in self.children:
-    #         res.extend(c.get_listed_positions())
-    #     return torch.stack(res, dim=0)
 
     def get_listed_names(self):
         res=[self.name]
@@ -977,5 +967,5 @@ class Joint():
     def apply_precomputed_localtransorms(self):
         for i, j in enumerate(self.joints):
             j.apply_transform(self.precomp_poses[i], only_self=False)
-            # exit("ff")
+
 
