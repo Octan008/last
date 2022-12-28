@@ -151,8 +151,6 @@ def weighted_transformation(xyzs, weights, transforms, viewdir = None, if_transf
 
     # if print_time  : start = time.time()
     xyzs = torch.cat([xyzs, torch.ones(n_sample, device = xyzs.device).unsqueeze(-1)], dim=-1)#[N,4]
-
-
     
     # transforms : [J, 4, 4]
     # weights : [N, J]

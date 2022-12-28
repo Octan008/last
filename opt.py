@@ -52,6 +52,8 @@ def config_parser(cmd=None):
                             help='learning rate')    
     parser.add_argument("--lr_mlp", type=float, default=1e-4,
                             help='learning rate')    
+    parser.add_argument("--lr_grid", type=float, default=1e-4,
+                            help='learning rate')    
     parser.add_argument("--lr_sh", type=float, default=1e-4,
                             help='learning rate')    
 

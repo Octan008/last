@@ -718,7 +718,7 @@ class MapCaster(CasterBase):
 
 
 class BWCaster(CasterBase):
-    def __init__(self, dim, gridSize, device):
+    def __init__(self, dim, gridSize, device, skip_rate = -1, args = None):
         super().__init__()
         self.app_n_comp = [16,16,16]
         self.j_channel = dim
@@ -731,6 +731,8 @@ class BWCaster(CasterBase):
         self.ray_aabb = None
         self.joints = None
         self.init_svd_volume(gridSize, device)
+        self.skip_rate = skip_rate
+        self.args = args
 
 
     def normalize_coord(self, xyz_sampled):
@@ -749,44 +751,65 @@ class BWCaster(CasterBase):
             vec_id = self.vecMode[i]
             mat_id_0, mat_id_1 = self.matMode[i]
             plane_coef.append(torch.nn.Parameter(
-                # scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
-                # scale * torch.zeros((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
                 scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
-                # scale * torch.ones((self.j_channel, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
             line_coef.append(
-                # torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
-                # torch.nn.Parameter(scale * torch.zeros((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
                 torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
-                # torch.nn.Parameter(scale * torch.ones((self.j_channel, n_component[i], gridSize[vec_id], 1))))
-
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
+    
+    def recoverty_skip(self, xyz_sampled, shape, padding):
+        dim = xyz_sampled.shape[-1]
+        xyz_sampled = xyz_sampled.view(shape[0], -1, dim)
+        res = xyz_sampled[:,:-2,:].unsqueeze(-2).expand(shape[0], -1, self.skip_rate+1 ,dim)
+        res2 = xyz_sampled[:,1:-1,:].unsqueeze(-2).expand(shape[0], -1, self.skip_rate+1 ,dim)
+        rate = torch.linspace(0, 1, self.skip_rate+1).view(1,1,-1,1).expand(shape[0], -1, self.skip_rate+1, 1).to(xyz_sampled.device)
+        tmp = res * (1-rate) + res2 * rate
+        add = xyz_sampled[:,-2:-1,:].unsqueeze(-2).expand(shape[0], -1, padding ,dim)
+        add2 = xyz_sampled[:,-1:,:].unsqueeze(-2).expand(shape[0], -1, padding ,dim)
+        rate_add = torch.linspace(0, 1, padding).view(1,1,-1,1).expand(shape[0], -1, padding, 1).to(xyz_sampled.device)
+        tmp_add = add * (1-rate_add) + add2 * rate_add
+        result = torch.cat([tmp[:,:,:-1,:].reshape(shape[0], -1, dim), tmp_add[:,:,:,:].reshape(shape[0], -1, dim)], dim = 1)
+        return result
         
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
-        xyz_slice = xyz_sampled.view(-1, 3).shape[0]
-        # # 1115
+        if self.skip_rate > 0:
+            # tmp_xyz = xyz_sampled
+            xyz_sampled = xyz_sampled[:, ::self.skip_rate, :]
+            viewdirs = viewdirs[:, ::self.skip_rate, :]
+            padding = 1
+            if shape[1] % self.skip_rate != 1:
+                padding = shape[1] % self.skip_rate
+                xyz_sampled = torch.cat([xyz_sampled, xyz_sampled[:, -1:, :]], dim=1)
+                viewdirs = torch.cat([viewdirs, viewdirs[:, -1:, :]], dim=1)
+            # xyz_sampled = self.recoverty_skip(xyz_sampled, shape, padding)
+            # print(torch.mean((tmp_xyz - xyz_sampled) ** 2))
+            # exit()
+        # xyz_slice = xyz_sampled.view(-1, 3).shape[0]
         weights = self.compute_weights(xyz_sampled.view(-1, 3), transforms)
         self.weights = weights
         self.cache_transforms = transforms
         self.restore_xyz = xyz_sampled
 
         xyz_sampled, viewdirs = weighted_transformation(xyz_sampled.view(-1, 3), weights.to(torch.float32), transforms, viewdirs.contiguous().view(-1, 3), if_transform_is_inv=self.args.use_indivInv)
-        xyz_sampled = xyz_sampled.view(shape)
-        viewdirs = viewdirs.view(shape)
+        xyz_sampled = xyz_sampled.view(shape[0], -1, 3)
+        viewdirs = viewdirs.view(shape[0], -1, 3)
+
+        if self.skip_rate > 0:
+            xyz_sampled = self.recoverty_skip(xyz_sampled, shape, padding)
+            viewdirs = self.recoverty_skip(viewdirs, shape, padding)
+            self.weights = self.recoverty_skip(self.weights, shape, padding).view(shape[0]*shape[1], -1)
         return xyz_sampled, viewdirs
 
-    def TV_loss_blendweights(self, reg, linear = False):
-        total = 0
-        for idx in range(len(self.app_line)):
-            for i in range(self.app_line[idx].shape[0]):
-                total = total + reg(self.app_line[idx][i].unsqueeze(0)) * 1e-4 + reg(self.app_plane[idx][i].unsqueeze(0)) * 1e-3                
-        return total
+    # def TV_loss_blendweights(self, reg, linear = False):
+    #     total = 0
+    #     for idx in range(len(self.app_line)):
+    #         for i in range(self.app_line[idx].shape[0]):
+    #             total = total + reg(self.app_line[idx][i].unsqueeze(0)) * 1e-4 + reg(self.app_plane[idx][i].unsqueeze(0)) * 1e-3                
+    #     return total
 
     def TV_loss_bwf(self, reg, linear = False):
-        total = 0
-        
+        total = 0        
         for idx in range(len(self.app_line)):
-            # print("tvloss", total)
             total = total + reg(self.app_line[idx][0].unsqueeze(0)) * 1e-3     
         return total
 
@@ -798,6 +821,11 @@ class BWCaster(CasterBase):
                 total = total + (tv_loss_func_line(self.app_line[idx][i]) * 1e-4 + tv_loss_func_plane(self.app_plane[idx][i]) * 1e-3) * 1e-4
         return total
 
+    def L1_loss_bwf(self):
+        total = 0
+        for idx in range(len(self.app_line)):
+            total = total + torch.mean(torch.abs(self.app_line[idx])) + torch.mean(torch.abs(self.app_plane[idx]))# + torch.mean(torch.abs(self.app_plane[idx])) + torch.mean(torch.abs(self.density_plane[idx]))
+        return total
 
     def sample_BWfield(self, xyz_sampled):
         # plane + line basis
@@ -821,10 +849,7 @@ class BWCaster(CasterBase):
         return F.relu(torch.stack(feats))
         
     
-    def compute_weights(self, xyz, transforms,  features=None, locs=None):
-        # return compute_weisghts(xyz, self.joints).to(torch.float32)
-
-       
+    def compute_weights(self, xyz, transforms,  features=None, locs=None):       
         xyz = torch.cat([xyz, torch.ones(xyz.shape[0], device = xyz.device).unsqueeze(-1)], dim=-1)#[samples, 4]
         #xyz_new : [samples, 4]
         #invs: [j, 4, 4]
@@ -842,7 +867,6 @@ class BWCaster(CasterBase):
         bwf = self.sample_BWfield(result) # [j,sample]
         self.test_rad = alphas[0]
         bwf = bwf * alphas
-        # return torch.transpose(bwf, 0 , 1)
         return bwf.permute(1,0)
 
 

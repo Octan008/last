@@ -473,8 +473,9 @@ class TensorBase(torch.nn.Module):
         t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)
 
         rng = torch.arange(N_samples, device = rays_o.device)[None].float()
-
-        rng += (torch.rand(rng.shape, device=rng.device) - 0.5)
+        perturb = False
+        if perturb:
+            rng += (torch.rand(rng.shape, device=rng.device) - 0.5)
         if is_train:
             rng = rng.repeat(rays_d.shape[-2],1)
             rng += torch.rand_like(rng[:,[0]], device = rays_o.device)
@@ -801,7 +802,7 @@ class TensorBase(torch.nn.Module):
         if not self.data_preparation:
             aabb_mask = self.aabb_mask(xyz_sampled)
             alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
-            ray_valid = ray_valid & aabb_mask       & alpha_mask  #   & castweight_mask
+            ray_valid = ray_valid & aabb_mask       & alpha_mask    & castweight_mask
 
         if ray_valid.any(): 
             
