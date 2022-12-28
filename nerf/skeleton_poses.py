@@ -24,7 +24,8 @@ class LearnSkeletonPose(nn.Module):
         self.type = type
         scale = 5.0
         if type=="euler":
-            self.pose = nn.Parameter(scale * torch.randn(size=(num_frames, num_joints, 3), dtype=torch.float32) - (scale*0.5), requires_grad=learn)  # (N, j, 3)
+            # self.pose = nn.Parameter(scale * torch.randn(size=(num_frames, num_joints, 3), dtype=torch.float32) - (scale*0.5), requires_grad=learn)  # (N, j, 3)
+            self.pose = nn.Parameter(torch.zeros(size=(num_frames, num_joints, 3), dtype=torch.float32), requires_grad=learn)  # (N, j, 3)
             # exit("not implemented")
         elif type=="quaternion":
             # exit("not implemented")

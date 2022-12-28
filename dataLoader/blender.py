@@ -52,6 +52,7 @@ class BlenderDataset(Dataset):
             for j in skeleton.get_children():
                 apply_animation(pose, j)
             self.frame_skeleton_pose.append(skeleton.get_listed_rotations().clone())
+        # exit()
 
     def set_focus_mode(self, vec, focus_mode=True):
         if vec is None:

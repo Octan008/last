@@ -363,6 +363,8 @@ class MLPCaster(CasterBase):
         self.cache_transformed_pos = result.permute(1,0,2)
         if self.print_time  : print("time for functorch.vmap", time.time() - start)
         self.mapped_pos = result
+        dists = torch.sum(result[:,:,:3] * result[:,:,:3], dim=-1)
+        alphas = torch.exp(-dists)
         # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
         if self.print_time  : start = time.time()
         result = self.normalize_coord(result[:,:,:3])
@@ -375,7 +377,7 @@ class MLPCaster(CasterBase):
         else:
             bwf = self.mlp(result)
         if self.print_time  : print("time for self.mlp", time.time() - start)
-
+        bwf = bwf * alphas.permute(1,0)
         return bwf.permute(1,0)
         
     @torch.cuda.amp.autocast(enabled=True)
@@ -750,7 +752,7 @@ class BWCaster(CasterBase):
         return grad_vars
 
     def init_svd_volume(self, res, device):
-        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
+        self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 1, device)
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
 
     def init_one_svd(self, n_component, gridSize, scale, device):
@@ -759,14 +761,16 @@ class BWCaster(CasterBase):
             vec_id = self.vecMode[i]
             mat_id_0, mat_id_1 = self.matMode[i]
             plane_coef.append(torch.nn.Parameter(
-                scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
+                0.1 + scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0]))))  #
             line_coef.append(
-                torch.nn.Parameter(scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))))
+                torch.nn.Parameter(
+                    0.1 + scale * torch.randn((self.j_channel, 1, n_component[i], gridSize[vec_id], 1))
+                    ))
         return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_coef).to(device)
         
     def forward(self, xyz_sampled, viewdirs, transforms, ray_valid, i_frame = None):
         shape = xyz_sampled.shape
-        
+
         if self.skip_rate > 0:
             xyz_sampled, viewdirs = xyz_sampled[:, ::self.skip_rate, :], viewdirs[:, ::self.skip_rate, :]
             padding = 1
@@ -1047,8 +1051,8 @@ class Map_BWCaster(CasterBase):
             invs = transforms
         else:
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
-        result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
+        result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).squeeze().permute(0,2,1)#[j, samples, 4]
+        # result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 1)(invs, xyz.unsqueeze(-1)).squeeze(-1)
         self.cache_transformed_pos = result
         result = self.normalize_coord(result[:,:,:3])
         bwf = self.sample_BWfield(result) # [j,sample]

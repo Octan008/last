@@ -137,9 +137,14 @@ def weighted_transformation(xyzs, weights, transforms, viewdir = None, if_transf
     #weights -> [N, J]
     #transforms -> [J, 4, 4]
     #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
+    if viewdir is not None:
+        return weighted_transformation_vd(xyzs, weights, transforms, viewdir, if_transform_is_inv)
+    else:
+        return weighted_transformation_novd(xyzs, weights, transforms, if_transform_is_inv)
+
     print_time = False
     
-    if print_time  : start = time.time()
+    # if print_time  : start = time.time()
     weights_sum = weights.sum(dim=1)
     n_sample = xyzs.shape[0]
     # n_joint = transforms.shape[0]
@@ -147,7 +152,7 @@ def weighted_transformation(xyzs, weights, transforms, viewdir = None, if_transf
 
     weights_sum = torch.clamp(weights_sum, min=eps)
     weights = weights/weights_sum.unsqueeze(1)
-    if print_time  : print("time1", time.time() - start)
+    # if print_time  : print("time1", time.time() - start)
 
     # if print_time  : start = time.time()
     xyzs = torch.cat([xyzs, torch.ones(n_sample, device = xyzs.device).unsqueeze(-1)], dim=-1)#[N,4]
@@ -160,23 +165,116 @@ def weighted_transformation(xyzs, weights, transforms, viewdir = None, if_transf
     if if_transform_is_inv:
         tmp = torch.matmul(torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4), xyzs.unsqueeze(-1))
     else:
-        if print_time  : start = time.time()
+        # if print_time  : start = time.time()
         tmp = torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4)
-        if print_time  : print("time2", time.time() - start)
-        if print_time  : start = time.time()
+        # if print_time  : print("time2", time.time() - start)
+        # if print_time  : start = time.time()
         tmp = affine_inverse_batch(tmp)
-        if print_time  : print("time3", time.time() - start)
-        if print_time  : start = time.time()
+        # if print_time  : print("time3", time.time() - start)
+        # if print_time  : start = time.time()
         if viewdir is not None:
             tmp_viewdir = torch.matmul(tmp[:,:3,:3], viewdir.unsqueeze(-1))
         tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
-        if print_time  : print("time4", time.time() - start)
+        # if print_time  : print("time4", time.time() - start)
     result = tmp.squeeze()[...,:3]
 
     if viewdir is not None:
         return result, tmp_viewdir
 
     return result
+# @torch.jit.script
+def weighted_transformation_novd(xyzs, weights, transforms, if_transform_is_inv:bool = True):
+    #xyzs -> [N, 3]
+    #weights -> [N, J]
+    #transforms -> [J, 4, 4]
+    #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
+    print_time = False
+    
+    # if print_time  : start = time.time()
+    weights_sum = weights.sum(dim=1)
+    n_sample = xyzs.shape[0]
+    # n_joint = transforms.shape[0]
+    eps = 1e-7
+
+    weights_sum = torch.clamp(weights_sum, min=eps)
+    weights = weights/weights_sum.unsqueeze(1)
+    # if print_time  : print("time1", time.time() - start)
+
+    # if print_time  : start = time.time()
+    xyzs = torch.cat([xyzs, torch.ones(n_sample, device = xyzs.device).unsqueeze(-1)], dim=-1)#[N,4]
+    
+    # transforms : [J, 4, 4]
+    # weights : [N, J]
+    # xyzs : [N, 4]
+
+    
+    if if_transform_is_inv:
+        tmp = torch.matmul(torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4), xyzs.unsqueeze(-1))
+    else:
+        # if print_time  : start = time.time()
+        tmp = torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4)
+        # if print_time  : print("time2", time.time() - start)
+        # if print_time  : start = time.time()
+        tmp = affine_inverse_batch(tmp)
+        # if print_time  : print("time3", time.time() - start)
+        # if print_time  : start = time.time()
+        # if viewdir is not None:
+        #     tmp_viewdir = torch.matmul(tmp[:,:3,:3], viewdir.unsqueeze(-1))
+        tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
+        # if print_time  : print("time4", time.time() - start)
+    result = tmp.squeeze()[...,:3]
+
+    # if viewdir is not None:
+    #     return result, tmp_viewdir
+
+    return result
+# @torch.jit.script
+def weighted_transformation_vd(xyzs, weights, transforms, viewdir = None, if_transform_is_inv:bool = True):
+    #xyzs -> [N, 3]
+    #weights -> [N, J]
+    #transforms -> [J, 4, 4]
+    #https://qiita.com/tand826/items/9e1b6a4de785097fe6a5
+    print_time = False
+    
+    # if print_time  : start = time.time()
+    weights_sum = weights.sum(dim=1)
+    n_sample = xyzs.shape[0]
+    # n_joint = transforms.shape[0]
+    eps = 1e-7
+
+    weights_sum = torch.clamp(weights_sum, min=eps)
+    weights = weights/weights_sum.unsqueeze(1)
+    # if print_time  : print("time1", time.time() - start)
+
+    # if print_time  : start = time.time()
+    xyzs = torch.cat([xyzs, torch.ones(n_sample, device = xyzs.device).unsqueeze(-1)], dim=-1)#[N,4]
+    
+    # transforms : [J, 4, 4]
+    # weights : [N, J]
+    # xyzs : [N, 4]
+
+    
+    if if_transform_is_inv:
+        tmp = torch.matmul(torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4), xyzs.unsqueeze(-1))
+        tmp_viewdir = None
+    else:
+        # if print_time  : start = time.time()
+        tmp = torch.matmul(weights, transforms.view(transforms.shape[0], -1)).view(n_sample, 4, 4)
+        # if print_time  : print("time2", time.time() - start)
+        # if print_time  : start = time.time()
+        tmp = affine_inverse_batch(tmp)
+        # if print_time  : print("time3", time.time() - start)
+        # if print_time  : start = time.time()
+        # if viewdir is not None:
+        tmp_viewdir = torch.matmul(tmp[:,:3,:3], viewdir.unsqueeze(-1))
+        tmp = torch.matmul(tmp, xyzs.unsqueeze(-1))
+        # if print_time  : print("time4", time.time() - start)
+    result = tmp.squeeze()[...,:3]
+
+
+    return result, tmp_viewdir
+
+    # return result
 
 
 def listify_position(data, data_pos):
@@ -296,15 +394,22 @@ def make_joints_from_blender(file_path, device="cuda"):
 
 
 def euler_to_matrix(angle = None, translate = None):
-    # if True:
-    #     eps = 1e-6
-    #     w = angle.unsqueeze(-1)
-    #     theta  = torch.sum(w*w, axis=-1)
-    #     theta = torch.clamp(theta, min = eps).sqrt()
+    if True:
+        eps = 1e-6
+        w = angle.unsqueeze(-1)
+        theta  = torch.sum(w*w, axis=-1)
+        theta = torch.clamp(theta, min = eps).sqrt()
         
-    #     w = w/theta.unsqueeze(-1)
-    #     transform = exp_so3(w, theta).permute(2,0,1)
-    #     return transform
+        w = w/theta.unsqueeze(-1)
+        transform = exp_so3(w, theta).permute(2,0,1)
+        return torch.cat([
+        torch.stack([
+            transform,
+            torch.tensor([0.0,0.0,0.0], device=angle.device)
+        ], dim=0), torch.tensor(
+            [0.0,0.0,0.0,1.0], device=angle.device
+        ).unsqueeze(1)], dim=1)
+        return transform
     mat = torch.eye(4, device=torch.device(angle.device))
     
     if translate is not None:
@@ -329,20 +434,41 @@ def euler_to_matrix(angle = None, translate = None):
 
 
 def euler_to_matrix_batch(angle = None, top_batching=False):
-    # mat = torch.eye(4, device=torch.device(my_torch_device))
+    mat = torch.eye(4, device=torch.device(my_torch_device))
     
     # if translate is not None:
     #     print(mat[:3, 3].shape, translate.shape)
     #     mat[:3, 3] = translate
-    # if True:
-    #     eps = 1e-6
-    #     w = angle.view(-1,3)
-    #     theta  = torch.sum(w*w, axis=-1)
-    #     theta = torch.clamp(theta, min = eps).sqrt()
-        
-    #     w = w/theta.unsqueeze(-1)
-    #     transform = exp_so3(w, theta).permute(2,0,1)
-    #     return transform
+    if True:
+        if not top_batching:
+            angle = angle.permute(1,0)
+        eps = 1e-6
+        w = angle.contiguous().view(-1,3)
+        theta  = torch.sum(w*w, axis=-1)
+        theta = torch.clamp(theta, min = eps).sqrt()
+
+
+        w = w/theta.unsqueeze(-1)
+        # print(theta)
+        # print(w)
+        # exit()
+        transform = exp_so3(w.permute(1,0), theta)
+
+        result =   torch.cat([
+        torch.cat([
+            # torch.stack([cy*cz,  -cy*sz,   sy],dim=0),
+            # torch.stack([cx*sz+cz*sx*sy, cx*cz-sx*sy*sz,   -cy*sx],dim=0),
+            # torch.stack([sx*sz-cx*cz*sy,   cz*sx+cx*sy*sz, cx*cy],dim=0),
+            transform,
+            torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).unsqueeze(0).repeat(1, 1, angle.shape[0])
+            # torch.tensor([0.0,0.0,0.0], device=angle.device).unsqueeze(1).expand(-1, angle.shape[1])
+        ], dim=0), torch.tensor(
+            [0.0,0.0,0.0,1.0], device=angle.device
+        ).unsqueeze(1).unsqueeze(1).repeat(1,1,angle.shape[0])], dim=1)
+
+        if top_batching:
+            result = result.permute(2,0,1)
+        return result
 
     if top_batching:
         angle = angle.permute(1,0)
@@ -461,12 +587,22 @@ class Joint():
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
-        # if True:
-        #     theta = torch.acos((r11+r22+r33-1)/2.0)
-        #     nx = (r32-r23)/(2*torch.sin(theta))
-        #     ny = (r13-r31)/(2*torch.sin(theta))
-        #     nz = (r21-r12)/(2*torch.sin(theta))
-        #     return torch.stack([nx, ny, nz], dim=0) * theta
+        if True:
+            # print(r11+r22+r33)
+            theta = torch.acos((r11+r22+r33-1)/2.0)
+            # print(theta)
+            assert(torch.isnan(theta).any() == False)
+            theta = torch.acos((r11+r22+r33-1)/2.0)
+            eps = 1e-5
+            nx = (r32-r23)/(2*torch.sin(theta)+eps)
+            ny = (r13-r31)/(2*torch.sin(theta)+eps)
+            nz = (r21-r12)/(2*torch.sin(theta)+eps)
+            # print(nx, ny, nz)
+            assert(torch.isnan(nx).any() == False)
+            assert(torch.isnan(ny).any() == False)
+            assert(torch.isnan(nz).any() == False)
+            return torch.stack([nx, ny, nz], dim=0) * theta
+
         # theta1 = torch.arctan(-(r23 / r33))
         # theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
         # theta3 = torch.arctan(-(r12 / r11))
@@ -494,12 +630,14 @@ class Joint():
         r11, r12, r13 = matrix[0,:3]
         r21, r22, r23 = matrix[1,:3]
         r31, r32, r33 = matrix[2,:3]
-        # if True:
-        #     theta = torch.acos((r11+r22+r33-1)/2.0)
-        #     nx = (r32-r23)/(2*torch.sin(theta))
-        #     ny = (r13-r31)/(2*torch.sin(theta))
-        #     nz = (r21-r12)/(2*torch.sin(theta))
-        #     return torch.stack([nx, ny, nz], dim=0) * theta
+        if True:
+            eps = 1e-5
+            theta = torch.acos((r11+r22+r33-1)/2.0)
+            nx = (r32-r23)/(2*torch.sin(theta)+eps)
+            ny = (r13-r31)/(2*torch.sin(theta)+eps)
+            nz = (r21-r12)/(2*torch.sin(theta)+eps)
+            return torch.stack([nx, ny, nz], dim=0) * theta
+
         # theta1 = torch.arctan(-r23 / r33)
         # theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
         # theta3 = torch.arctan(-r12 / r11)

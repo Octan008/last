@@ -755,7 +755,9 @@ class TensorBase(torch.nn.Module):
         if not self.data_preparation:
             aabb_mask = self.aabb_mask(xyz_sampled)
             alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
-            ray_valid = ray_valid & aabb_mask       & alpha_mask    & castweight_mask
+            ray_valid = ray_valid & aabb_mask       & alpha_mask  
+            if not self.args.free_opt2:
+                ray_valid = ray_valid & castweight_mask
 
         if ray_valid.any(): 
             
