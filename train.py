@@ -213,6 +213,7 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
     
     skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type=args.pose_type, use_tail=  args.free_opt7)
+    #para_pos
     if args.free_opt4:
         skeleton.refresh()
         tfs = skeleton.get_listed_global_transforms()
@@ -221,8 +222,12 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
         para_six_pose =  torch.cat([rotations, translates], dim=-1)
         skeleton_dataset = LearnSkeletonPose(num_animFrames, len(joints), type="para_six", para_pose = para_six_pose)
+
     skeleton_dataset.to(device)
     skeleton_dataset.set_tails(skeleton.get_tail_ids())
+    if args.ckpt_skeleton is not None:
+        skeleton_dataset.load(torch.load(args.ckpt_skeleton, map_location=device))
+    grad_vars_skeletonpose = list(skeleton_dataset.parameters())
     
 
     
@@ -281,15 +286,8 @@ def skeleton_optim(rank, args, n_gpu = 1):
         ckpt = torch.load(args.ckpt_pcaster, map_location=device)
         pCaster_origin.load_state_dict(ckpt["state_dict"])
 
-        
-
-
+    
     pCaster_origin.set_skeleton(skeleton)
-
-    if args.ckpt_skeleton is not None:
-        skeleton_dataset.load(torch.load(args.ckpt_skeleton, map_location=device))
-
-
 
     if parallel:
         pCaster = DDP(pCaster_origin, device_ids=[rank])
@@ -301,10 +299,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
         num_frames = num_frames // n_gpu
         if(rank < num_frames % n_gpu):
             num_frames += 1
-
-    grad_vars_skeletonpose = list(skeleton_dataset.parameters())
-    
-    
     
     wd = 1e-6
     #<Training> Setup Optimizer
@@ -373,8 +367,6 @@ def skeleton_optim(rank, args, n_gpu = 1):
     
 
     for iteration in pbar:
-        # with torch.autograd.profiler.profile(use_cuda=True) as prof:
-        # if True:
         if args.caster == "grid_map":
             with torch.no_grad():
                 if (iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0):
@@ -450,24 +442,24 @@ def skeleton_optim(rank, args, n_gpu = 1):
                     if args.free_opt2:
                         tensorf.set_tmp_animframe_index(allanimframes[itr+num_frames*rank_diff])
 
-                    if print_time : start = time.time()
+                    # if print_time : start = time.time()
                     rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
                                             N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True, skeleton_props=skeleton_props)
-                    if print_time : print("render time", time.time() - start)
+                    # if print_time : print("render time", time.time() - start)
 
 
-                    if print_time : start = time.time()
+                    # if print_time : start = time.time()
                     loss = torch.mean((rgb_map - rgb_train) ** 2)
-                    if print_time : print("loss time", time.time() - start)
+                    # if print_time : print("loss time", time.time() - start)
 
-                    if torch.isnan(loss):
-                        raise ValueError("Loss is NaN")
+                    assert(torch.isnan(loss).any() == False)
+                        
 
                     total_loss = 0
-                    tvloss = 0
-                    linearloss = 0
-                    rest_loss = 0
-                    eloss=0
+                    # tvloss = 0
+                    # linearloss = 0
+                    # rest_loss = 0
+                    # eloss=0
                     pbar_description = f""
 
                     if args.caster == "grid_map":
@@ -585,35 +577,36 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
                     # loss
                     total_loss = total_loss + loss
-                    # if Ortho_reg_weight > 0:
-                    #     loss_reg = tensorf.vector_comp_diffs()
-                    #     total_loss += Ortho_reg_weight*loss_reg
-                    #     summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
-                    # if L1_reg_weight > 0:
-                    #     loss_reg_L1 = tensorf.density_L1()
-                    #     total_loss += L1_reg_weight*loss_reg_L1
-                    #     summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
+                    if False:
+                        if Ortho_reg_weight > 0:
+                            loss_reg = tensorf.vector_comp_diffs()
+                            total_loss += Ortho_reg_weight*loss_reg
+                            summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
+                        if L1_reg_weight > 0:
+                            loss_reg_L1 = tensorf.density_L1()
+                            total_loss += L1_reg_weight*loss_reg_L1
+                            summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
 
-                    # if TV_weight_density>0:
-                    #     TV_weight_density *= lr_factor
-                    #     loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
-                    #     total_loss = total_loss + loss_tv
-                    #     summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
-                    # if TV_weight_app>0:
-                    #     TV_weight_app *= lr_factor
-                    #     loss_tv = loss_tv + tensorf.TV_loss_app(tvreg)*TV_weight_app
-                    #     total_loss = total_loss + loss_tv
-                    #     summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
+                        if TV_weight_density>0:
+                            TV_weight_density *= lr_factor
+                            loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
+                            total_loss = total_loss + loss_tv
+                            summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
+                        if TV_weight_app>0:
+                            TV_weight_app *= lr_factor
+                            loss_tv = loss_tv + tensorf.TV_loss_app(tvreg)*TV_weight_app
+                            total_loss = total_loss + loss_tv
+                            summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
 
                     optimizer.zero_grad()
                     
 
-                    if print_time : start = time.time()
+                    # if print_time : start = time.time()
 
                     if mix_precision: scaler.scale(total_loss).backward()
                     else: total_loss.backward()
 
-                    if print_time : print("backward time", time.time() - start)
+                    # if print_time : print("backward time", time.time() - start)
                     
                     
 
