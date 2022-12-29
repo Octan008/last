@@ -174,8 +174,8 @@ class MLPCaster(CasterBase):
 
         if args.free_opt8:
             # self.bound = 8
-            self.encoder, self.in_dim = get_encoder("hashgrid", desired_resolution=2048 * self.bound, multires=6)
-            self.encoder = self.encoder.to(device)
+            # self.encoder, self.in_dim = get_encoder("hashgrid", desired_resolution=2048 * self.bound, multires=6)
+            # self.encoder = self.encoder.to(device)
             self.interface_dim = self.in_dim * self.skeleton_dim
             self.output_dim = self.output_dim * self.skeleton_dim
 
@@ -246,17 +246,15 @@ class MLPCaster(CasterBase):
 
     @torch.cuda.amp.autocast(enabled=True)
     def concate_mlp(self, x):
-        # x: [J, N, 3], in [-bound, bound]
-        # if self.print_time  : start = time.time()
-        # tmp = self.encoder(x, bound=self.bound)
-        tmp = self.encoder(x, bound = self.bound)
+        # x: sample, j, 3
+        tmp = self.encoder(x, bound = self.bound) # sample, j, interface_dim
         return self.concate_mlp_sub(tmp.view(-1, self.interface_dim))
 
     def concate_mlp_sub(self, tmp):
-        # tmp =tmp.view(-1, self.interface_dim)
+
         h = self.weight_nets(tmp)
         sigma = F.relu(h)
-        sigma = sigma.view(self.skeleton_dim, -1)
+        sigma = sigma.view(-1, self.skeleton_dim).permute(1, 0)
         return sigma
     
     @torch.cuda.amp.autocast(enabled=True)
@@ -286,10 +284,8 @@ class MLPCaster(CasterBase):
 
     @torch.cuda.amp.autocast(enabled=True)
     def warp_points(self, points, transforms, viewdirs = None):
-        if self.print_time  : start = time.time()
         # points = torch.cat([points, torch.ones(points.shape[:-1], device = points.device).unsqueeze(-1)], dim=-1)#[samples, 4]
-        weights = self.compute_weights(points.view(-1, 3), transforms)
-        if self.print_time  : print('compute_weights', time.time() - start)
+        weights = self.compute_weights(points.view(-1, 3), transforms) #[samples, J]
         self.weights = weights
         self.cache_transforms = transforms
         self.restore_xyz = points
@@ -337,29 +333,20 @@ class MLPCaster(CasterBase):
     
     def compute_rest_positions(self, xyz, transforms,  features=None, locs=None):
         xyz = xyz.view(-1, 3)
-        # if self.print_time  : start = time.time()
         xyz = torch.cat([xyz, torch.ones(xyz.shape[0], device=xyz.device).unsqueeze(-1)], dim=-1)#[samples, 4]
         if self.args.use_indivInv:
             invs = transforms
         else:
             invs = affine_inverse_batch(self.skeleton.precomp_forward_global_transforms)
-        # if self.print_time  : print("time for affine_inverse_batch", time.time() - start)
 
-        # if self.print_time  : start = time.time()
-        # result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims=0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
         result = functorch.vmap(self.matmul_func, in_dims = (None, 0), out_dims = 0)(invs, xyz.unsqueeze(-1)).squeeze(-1)
-        self.cache_transformed_pos = result.permute(1,0,2)
-        # if self.print_time  : print("time for functorch.vmap", time.time() - start)
+        self.cache_transformed_pos = result.permute(1,0,2) # [j, sample, 4]
         self.mapped_pos = result
         dists = torch.sum(result[:,:,:3] * result[:,:,:3], dim=-1)
         alphas = torch.exp(-dists)
-        # result = torch.matmul(invs, xyz_new.permute(1,0).unsqueeze(0).expand(invs.shape[0],4,-1)).permute(0,2,1)#[j, samples, 4]
-        # if self.print_time  : start = time.time()
-        result = self.normalize_coord(result[:,:,:3])
-        # if self.print_time  : print("time for self.mlp", time.time() - start)
-        # bwf = self.mlp(result) # [j,sample]
 
-        # if self.print_time  : start = time.time()
+        result = self.normalize_coord(result[:,:,:3])
+ 
         return result, alphas
         #result : N, J, 3
         #alphas : N, J
@@ -368,12 +355,11 @@ class MLPCaster(CasterBase):
     def compute_weights(self, xyz, transforms,  features=None, locs=None):       
         result, alphas = self.compute_rest_positions(xyz, transforms, features, locs)
         if self.args.free_opt8:
-            bwf = self.concate_mlp(result) # [j,sample]
+            bwf = self.concate_mlp(result) #sample, j -> j, sample
         else:
-            bwf = self.mlp(result)
-        # if self.print_time  : print("time for self.mlp", time.time() - start)
-        bwf = bwf * alphas.permute(1,0)
-        return bwf.permute(1,0)
+            bwf = self.mlp(result) #sample, j -> j, sample
+        bwf = bwf * alphas.permute(1,0) # [j, sample]
+        return bwf.permute(1,0) # [sample, j]
         
     @torch.cuda.amp.autocast(enabled=True)
     def compute_warp_jacobian(self, points):
@@ -382,7 +368,7 @@ class MLPCaster(CasterBase):
 
     @torch.cuda.amp.autocast(enabled=True)
     def compute_weights_grad(self, points):
-        if not self.args.free_opt8:
+        if not self.args.free_opt8 or True:
             func = partial(self.compute_weights, transforms = self.cache_transforms)
             tmp = functorch.vmap(functorch.jacfwd(func), in_dims = 0, out_dims = 0)(points).squeeze(1)
             tmp = torch.matmul(tmp, points.unsqueeze(-1)).squeeze(-1)

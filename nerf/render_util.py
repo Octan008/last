@@ -362,37 +362,6 @@ def make_joints_from_blender(file_path, device="cuda"):
 
 
 
-# def cast_positions(positions, joints, weights_list = None):
-#     if weights_list is None:
-#         weights_list = []
-#         for j in joints:
-#             weights = (positions - j.global_pos(ngp=True)).to(torch.float32).to(positions.device)
-#             weights = (weights*weights).sum(dim=1, keepdim=True).squeeze()
-#             weights = torch.exp(-weights*10)
-#             weights_list.append(weights)
-#         weights_list = torch.stack(weights_list, dim=0)
-#         weights_sum = weights_list.sum(dim=0)
-#         weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
-#     else:
-#         weights_sum = weights_list.sum(dim=0)
-#         weights_sum =  torch.where(weights_sum < 1e-5, torch.ones_like(weights_sum), weights_sum)
- 
-#     ones = torch.ones(positions.shape[0], device=positions.device,  dtype=torch.float32).unsqueeze(1)
-#     casted = torch.zeros(positions.shape[0],4, device=positions.device,  dtype=torch.float32).unsqueeze(2)
-#     weights_list = weights_list/weights_sum
-#     positions = torch.cat([positions, ones], dim=1)
-    
-#     for i, j in enumerate(joints):
-#         mat = j.inv_totalTransform(ngp=True).unsqueeze(0).expand(positions.shape[0],-1,-1)
-
-#         casted = casted  + torch.matmul(mat, positions[...,None]) * weights_list[i].unsqueeze(1).unsqueeze(2)
-#         # if torch.isnan(casted).any() or torch.isinf(casted).any():
-#         #     raise ValueError("error!")
-#     del ones, weights_list, positions, mat
-#     return torch.squeeze(casted)[...,:3]
-
-
-
 def euler_to_matrix(angle = None, translate = None):
     if True:
         eps = 1e-6
