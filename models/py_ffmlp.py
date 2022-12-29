@@ -45,7 +45,7 @@ class py_FFMLP(nn.Module):
             else:
                 _in = self.hidden_dim
                 _out = self.hidden_dim
-                
+
             self.Network.add_module('Linear'+str(i), nn.Linear(_in, _out, bias=bias).to(device))
             if not i == self.num_layers - 1:
                 self.Network.add_module('Activation'+str(i), nn.ReLU().to(device))
@@ -78,10 +78,12 @@ class py_FFMLP(nn.Module):
         torch.nn.init.uniform_(m, -std, std)
 
 
-    def reset_parameters(self, std=-1.0):
+    def reset_parameters(self, std=-1.0, use_bias = False):
         def weights_init(m, std):
             if type(m) == nn.Linear:
                 torch.nn.init.uniform_(m.weight, -std, std)
+                if use_bias:
+                    torch.nn.init.uniform_(m.bias, -std, std)
             
         torch.manual_seed(42)
         if std < 0.0:

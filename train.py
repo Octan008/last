@@ -246,9 +246,9 @@ def skeleton_optim(rank, args, n_gpu = 1):
     elif args.caster == "bwf":
         # pass
         reso_cur_2 = reso_cur
-        reso_cur_2[0] = reso_cur_2[0]
-        reso_cur_2[1] = reso_cur_2[1]
-        reso_cur_2[2] = reso_cur_2[2]
+        reso_cur_2[0] = reso_cur_2[0]//4
+        reso_cur_2[1] = reso_cur_2[1]//4
+        reso_cur_2[2] = reso_cur_2[2]//4
         bwf_nSamples = max(reso_cur_2)
        
         skip_rate = int(tensorf.nSamples / (bwf_nSamples*args.step_ratio))
@@ -543,54 +543,54 @@ def skeleton_optim(rank, args, n_gpu = 1):
 
                     if args.caster == "sh" and not args.use_gt_skeleton:
                         pass
-                    if args.free_opt3:
-                        if args.caster == "mlp":
-                            num_sample = 10000
-                            eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
-                            raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                            eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                            eloss = eloss.mean() * 0.1
+                    # if args.free_opt3:
+                    if args.caster == "mlp":
+                        num_sample = 1000
+                        eloss, idx = pCaster_origin.compute_weight_elastic_loss(num_sample = num_sample)
+                        raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        eloss = eloss.mean()
 
-                            # cached_weight = pCaster_origin.weights
-                            # cached_transformed_pos = pCaster_origin.cache_transformed_pos[...,:3]
-                            # pos_central = torch.mean(cached_weight.unsqueeze(-1) * cached_transformed_pos.permute(1,0,2), dim=0)
-                            # central_loss = torch.mean(pos_central ** 2)
-                            # rest_loss = central_loss
+                        # cached_weight = pCaster_origin.weights
+                        # cached_transformed_pos = pCaster_origin.cache_transformed_pos[...,:3]
+                        # pos_central = torch.mean(cached_weight.unsqueeze(-1) * cached_transformed_pos.permute(1,0,2), dim=0)
+                        # central_loss = torch.mean(pos_central ** 2)
+                        # rest_loss = central_loss
 
-                            # w_sum, sigma = tensorf.occupancy.view(-1), tensorf.weights_sum.view(-1)
-                            # w_sum = clip_weight(w_sum, thresh = 0.5)
-                            # sigma = clip_weight(sigma, thresh = 0.1)
- 
-                            # sigma_loss = torch.mean((w_sum - sigma)**2)
-                            # linearloss = sigma_loss
+                        # w_sum, sigma = tensorf.occupancy.view(-1), tensorf.weights_sum.view(-1)
+                        # w_sum = clip_weight(w_sum, thresh = 0.5)
+                        # sigma = clip_weight(sigma, thresh = 0.1)
 
-                            
+                        # sigma_loss = torch.mean((w_sum - sigma)**2)
+                        # linearloss = sigma_loss
 
-                            # jpos = skeleton.get_listed_positions()
-                            # j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
-                            # j_weights_sum = torch.sum(j_weights, dim=1)
-                            # j_weights_sum = torch.clamp(j_weights_sum, min=1e-6)
-                            # j_weights = j_weights / j_weights_sum.unsqueeze(1)
-                            # j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
-                            # j_w_loss = torch.mean(j_w_loss ** 2)
-                            # total_loss += j_w_loss * 1
-                            # eloss = j_w_loss
+                        
 
-                            total_loss += eloss
-                            
-                            # total_loss += j_w_loss * 1
+                        # jpos = skeleton.get_listed_positions()
+                        # j_weights = pCaster_origin.compute_weights(jpos, pCaster_origin.cache_transforms)
+                        # j_weights_sum = torch.sum(j_weights, dim=1)
+                        # j_weights_sum = torch.clamp(j_weights_sum, min=1e-6)
+                        # j_weights = j_weights / j_weights_sum.unsqueeze(1)
+                        # j_w_loss = j_weights - torch.eye(j_weights.shape[0], device=j_weights.device)
+                        # j_w_loss = torch.mean(j_w_loss ** 2)
+                        # total_loss += j_w_loss * 1
+                        # eloss = j_w_loss
 
-                            total_loss += tvloss  * 0.1
+                        total_loss += eloss * 0.1
+                        
+                        # total_loss += j_w_loss * 1
 
-                            pbar_description = f'Iteration {iteration:05d}:'+ f' mse = {loss:.4f}' + f' tvloss = {tvloss:.4f}' + f' elastic_loss = {eloss:.4f}'
+                        # total_loss += tvloss  * 0.1
 
-                        else:
-                            num_sample = 10000
-                            eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
-                            raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
-                            eloss = eloss * torch.clamp(raw_sigma, 0.0)
-                            eloss = eloss.sum(-1).mean() * 0.01
-                            total_loss += eloss
+                        pbar_description = f'Iteration {iteration:05d}:'+ f' mse = {loss:.4f}' + f' elastic_loss = {eloss:.4f}'
+
+                        # else:
+                        #     num_sample = 10000
+                        #     eloss, idx = pCaster_origin.compute_elastic_loss(num_sample = num_sample)
+                        #     raw_sigma = torch.index_select(tensorf.raw_sigma.view(-1), 0, idx)
+                        #     eloss = eloss * torch.clamp(raw_sigma, 0.0)
+                        #     eloss = eloss.sum(-1).mean() * 0.01
+                        #     total_loss += eloss
 
 
                     # loss
