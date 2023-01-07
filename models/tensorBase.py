@@ -84,11 +84,11 @@ def sample_pdf(bins, weights, n_samples, det=False):
 
 def positional_encoding(positions, freqs):
     
-        freq_bands = (2**torch.arange(freqs).float()).to(positions.device)  # (F,)
-        pts = (positions[..., None] * freq_bands).reshape(
-            positions.shape[:-1] + (freqs * positions.shape[-1], ))  # (..., DF)
-        pts = torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
-        return pts
+    freq_bands = (2**torch.arange(freqs).float()).to(positions.device)  # (F,)
+    pts = (positions[..., None] * freq_bands).reshape(
+        positions.shape[:-1] + (freqs * positions.shape[-1], ))  # (..., DF)
+    pts = torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
+    return pts
 
 def raw2alpha(sigma, dist):
     # sigma, dist  [N_rays, N_samples]
@@ -615,6 +615,7 @@ class TensorBase(torch.nn.Module):
 
         if self.alphaMask is not None:
             alphas = self.alphaMask.sample_alpha(xyz_locs)
+            alpha_mask = alphas > 0
         else:
             alpha_mask = torch.ones_like(xyz_locs[:,0], dtype=bool)
             
@@ -693,6 +694,7 @@ class TensorBase(torch.nn.Module):
                 transforms = self.skeleton.rotations_to_invs_fast(self.frame_pose, type=self.posetype)
             else:
                 if self.args.free_opt4:
+                    # print(self.frame_pose)
                     transforms = self.skeleton.para_rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
                 else:
                     transforms = self.skeleton.rotations_to_transforms_fast(self.frame_pose, type=self.posetype)
@@ -709,7 +711,8 @@ class TensorBase(torch.nn.Module):
             if self.print_time  : start = time.time()
             if if_cast:
                 if self.args.free_opt9:
-                    id_weight_render = torch.argmin(torch.abs(xyz_sampled[...,2]-1), dim = -1)
+                    means = 100
+                    _, id_weight_render = torch.topk( -torch.abs(xyz_sampled[...,2]-1), k = means, dim = -1)
 
                 xyz_sampled, viewdirs = self.caster(xyz_sampled, viewdirs, transforms, ray_valid, i_frame = self.tmp_animframe_index)
 
@@ -718,24 +721,22 @@ class TensorBase(torch.nn.Module):
 
 
 
-                # if not self.args.free_opt2:
-                self.caster_weights = self.caster_origin.get_weights()#N,J
-                weights_sum = torch.sum(self.caster_weights, dim=1)
-                self.bg_alpha = clip_weight(weights_sum, thresh = 1e-6).view(shape[0], -1)
-                castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
+                if not self.args.free_opt2:
+                    self.caster_weights = self.caster_origin.get_weights()#N,J
+                    assert(not torch.isnan(self.caster_weights).any())
+                    weights_sum = torch.sum(self.caster_weights, dim=1)
+                    self.weights_sum = weights_sum
+                    self.bg_alpha = clip_weight(weights_sum, thresh = 1e-6).view(shape[0], -1)
+                    castweight_mask = self.bg_alpha.squeeze(-1) > 0.8
                 if self.args.free_opt9:
-                    # print(self.caster_weights.shape, shape)
                     weights_sum = torch.clamp(weights_sum, min=1e-7)
                     self.weights_sum = weights_sum
                     weights_color =  self.caster_weights/weights_sum.unsqueeze(1)
                     weights_color = weights_color.view(shape[0], shape[1], weights_color.shape[-1])
-                    # print(weights_color.shape, id_weight_render.shape, self.bg_alpha.shape)
-                    print(torch.sum(self.bg_alpha < 0.8))
                     weights_color = weights_color * self.bg_alpha.unsqueeze(-1)
-                    #weights_color.view(shape[:-1]+(-1, ) : B, depth, J
-                    # print(weights_color.view((shape[1], shape[0], weights_color.shape[-1], )))
-                    weights_color = torch.gather(weights_color, 1, id_weight_render.view(-1,1,1).expand(-1,-1,weights_color.shape[-1]))
-                    self.render_weights = weights_color.squeeze(1)
+                    # weights_color = torch.gather(weights_color, 1, id_weight_render.view(shape[0], means ,1).expand(-1,-1,weights_color.shape[-1]))
+                    
+                    self.render_weights = weights_color.mean(1).squeeze(1)
 
 
 
@@ -756,11 +757,11 @@ class TensorBase(torch.nn.Module):
             aabb_mask = self.aabb_mask(xyz_sampled)
             alpha_mask = self.alpha_mask(xyz_sampled).view(shape[0],shape[1])
             ray_valid = ray_valid & aabb_mask       & alpha_mask  
-            if not self.args.free_opt2:
-                ray_valid = ray_valid & castweight_mask
+            # if not self.args.free_opt2:
+            #     ray_valid = ray_valid & castweight_mask
 
         if ray_valid.any(): 
-            
+            assert(not torch.isnan(xyz_sampled).any())
             xyz_sampled = self.normalize_coord(xyz_sampled)
 
             # xyz_sampled = xyz_sampled.reshape(shape[0],shape[1], 3)
@@ -770,6 +771,7 @@ class TensorBase(torch.nn.Module):
 
             validsigma = self.feature2density(sigma_feature)
             sigma[ray_valid] = validsigma
+            assert(not torch.isnan(sigma).any())
             
             # if not self.data_preparation and save_npz:
             #     save_npz["sigma"] = sigma.cpu().numpy()
@@ -781,10 +783,26 @@ class TensorBase(torch.nn.Module):
 
 
         alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
-        self.occupancy = 1 - alpha
+        self.occupancy = alpha
+        # print(self.occupancy.shape, id_weight_render.shape, self.render_weights.shape)
+        # exit()
+        if self.args.free_opt9:
+            tmp, _id = self.caster_origin.compute_elastic_loss()
+            self.render_weights = torch.sum(weight[..., None] * weights_color, -2)
+
+        if self.args.free_opt11 and not is_train:
+            # exit("fasdfa")
+            center_weights = self.caster_origin.central_weight(xyz_sampled.view(-1,3)) # N
+            central = 1 - torch.exp(-center_weights*3)
+            central = central.view(shape[0], shape[1], 1)
+            map = torch.sum(weight[..., None] * central, -2)
+            return map.expand(shape[0], 3), map
+
         self.raw_sigma = weight
+        assert(not torch.isnan(weight).any())
         if not self.args.free_opt2 and not self.data_preparation:
             weight = weight * self.bg_alpha
+        assert(not torch.isnan(weight).any())
         torch.cuda.empty_cache()
         app_mask = weight > self.rayMarch_weight_thres
 
@@ -795,16 +813,19 @@ class TensorBase(torch.nn.Module):
             app_features = self.compute_appfeature(xyz_sampled[app_mask].view(-1,3))    
             valid_rgbs = self.renderModule(xyz_sampled[app_mask].view(-1,3), viewdirs[app_mask].view(-1,3), app_features)
             rgb[app_mask] = valid_rgbs
+        assert(not torch.isnan(rgb).any())
         
         
 
         acc_map = torch.sum(weight, -1)
         rgb_map = torch.sum(weight[..., None] * rgb, -2)
+        assert(not torch.isnan(weight).any())
 
         if white_bg or (is_train and torch.rand((1,))<0.5):
             rgb_map = rgb_map + (1. - acc_map[..., None])
 
         rgb_map = rgb_map.clamp(0,1)
+        assert(not torch.isnan(rgb_map).any())
 
         with torch.no_grad():
             depth_map = torch.sum(weight * z_vals, -1)

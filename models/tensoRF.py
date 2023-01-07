@@ -139,6 +139,25 @@ class TensorVM(TensorBase):
 class TensorVMSplit(TensorBase):
     def __init__(self, aabb, gridSize, device, **kargs):
         super(TensorVMSplit, self).__init__(aabb, gridSize, device, **kargs)
+    # def density_L1(self):
+    #     total = 0
+    #     # print(self.state_dict().keys())
+    #     for param in self.sigma_net.parameters():
+    #         total = total + torch.mean(torch.abs(param))
+    #         # print(param.shape, torch.mean(torch.abs(param)))
+    #     # exit()
+    #     return total
+    #     # return torch.tensor(total)
+    #     total = 0
+    #     for idx in range(len(self.density_plane)):
+    #         total = total + torch.mean(torch.abs(self.density_plane[idx])) + torch.mean(torch.abs(self.density_line[idx]))# + torch.mean(torch.abs(self.app_plane[idx])) + torch.mean(torch.abs(self.density_plane[idx]))
+    #     return total
+
+    def density_L1(self):
+        total = 0
+        for idx in range(len(self.density_line)):
+            total = total + torch.mean(torch.abs(self.density_line[idx]))
+        return total
         
 
 

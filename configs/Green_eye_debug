@@ -1,21 +1,25 @@
 dataset_name = blender
 datadir = ./data/nerf_synthetic/anim
-expname =  #Green_mlp_revive
+expname =  zzz_kuso_direct_loseeloss0.001
 #basedir = "./#refreshlog"
 basedir = "./#log_trash"
-add_timestamp = 1
+add_timestamp = 0
 local_batching = 0
 
-caster = mlp
-use_gt_skeleton = 0
-#free_opt2 = 1 # direct_map
-JOKE = 0
+caster = direct_map
+# use_gt_skeleton = 1
+free_opt2 = 1 # direct_map
+# JOKE = 1
 
 pose_type = euler
 
+# free_opt9 = 1
+free_opt8 = 1
+# free_opt4 = 1
 
-lr_mlp = 1e-5
-lr_skel = 0.00017
+
+lr_mlp = 1e-3
+lr_skel = 0.0007
 
 #ckpt = ./log/tensorf_anim_VM_traintest_shark/tensorf_anim_VM_traintest55.th
 ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
@@ -23,15 +27,14 @@ ckpt = ./strage_log/default_upsample/default_upsample_it59999.th
 #ckpt_ngp = ./torchngp/shark/checkpoints/ngp.pth.tar
 #ckpt_skeleton = ./strage_log/default_upsample/default_upsample_skeleton_it59999.th
 
-#ckpt_pcaster = ./strage_log/mlp_gtskel/Green_integrated_pCaster_it15999.th
-
+# ckpt_pcaster = "./#log_trash/Red_flipalpha-20221231-180705/Red_flipalpha_pCaster_it9999.th"
 #sh_feats = ./log/tensorf_anim_VM_traintest53/tensorf_anim_VM_traintest53_sh_29999.th
 
 
 n_iters = 300000
 #batch_size = 4096
 batch_size = 256
-test_batch_size = 512
+test_batch_size = 256
 progress_refresh_rate = 1
 
 N_voxel_init = 2097156 # 128**3
@@ -39,7 +42,7 @@ N_voxel_final = 27000000 # 300**3
 upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
 
-N_vis = 2
+N_vis = 1
 vis_every = 2000
 step_ratio = 0.5
 

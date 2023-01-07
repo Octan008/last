@@ -601,12 +601,16 @@ class Joint():
         r31, r32, r33 = matrix[2,:3]
         if True:
             eps = 1e-5
-            theta = torch.acos((r11+r22+r33-1)/2.0)
+            theta = torch.acos(torch.clamp((r11+r22+r33-1)/2.0, -1, 1))
+            assert(not torch.isnan(theta).any())
             nx = (r32-r23)/(2*torch.sin(theta)+eps)
             ny = (r13-r31)/(2*torch.sin(theta)+eps)
             nz = (r21-r12)/(2*torch.sin(theta)+eps)
-            return torch.stack([nx, ny, nz], dim=0) * theta
-
+            result = torch.stack([nx, ny, nz], dim=0) * theta
+            assert(not torch.isnan(result).any())
+            if top_batching:
+                return result.permute(1,0)
+            return result
         # theta1 = torch.arctan(-r23 / r33)
         # theta2 = torch.arctan(r13 * torch.cos(theta1) / r33)
         # theta3 = torch.arctan(-r12 / r11)
@@ -725,6 +729,7 @@ class Joint():
             animations = euler_to_matrix_batch(poses, top_batching=True)
 
         animations[:,:3,3] = translates
+        assert(not torch.isnan(animations).any())
         self.precomp_forward_global_transforms = animations
         return torch.bmm(animations, self.precomp_bindinvs)
 
